@@ -4,6 +4,10 @@ const path = require("path");
 const axios = require("axios");
 const request = require("request");
 
+// Configuration from environment variables
+const PORT = process.env.PORT || 3000;
+const APPSTATE_JSON = process.env.APPSTATE_JSON;
+
 // Bot startup time for uptime tracking
 const BOT_START_TIME = Date.now();
 
@@ -14,14 +18,30 @@ const COMMANDS = {
   uptime: "Show bot uptime"
 };
 
-// Check if required files exist
-const requiredFiles = ["appstate.json"];
-for (const file of requiredFiles) {
-  if (!fs.existsSync(file)) {
-    console.error(`❌ ERROR: Required file '${file}' not found!`);
-    console.error(`📌 Please add the '${file}' to the project root directory.`);
+// Get appstate - either from environment variable or file
+let appState;
+if (APPSTATE_JSON) {
+  try {
+    appState = JSON.parse(APPSTATE_JSON);
+    console.log("✅ Using APPSTATE_JSON from environment variable");
+  } catch (error) {
+    console.error(`❌ ERROR: Invalid APPSTATE_JSON environment variable!`);
     process.exit(1);
   }
+} else if (fs.existsSync("appstate.json")) {
+  try {
+    appState = JSON.parse(fs.readFileSync("appstate.json", "utf8"));
+    console.log("✅ Using appstate.json from file");
+  } catch (error) {
+    console.error(`❌ ERROR: Invalid appstate.json file!`);
+    process.exit(1);
+  }
+} else {
+  console.error(`❌ ERROR: Facebook account credentials not found!`);
+  console.error(`📌 Please provide either:`);
+  console.error(`   1. Set APPSTATE_JSON environment variable with your account credentials (JSON)`);
+  console.error(`   2. Add 'appstate.json' file to the project root directory`);
+  process.exit(1);
 }
 
 // Ensure cache folder exists
@@ -50,9 +70,10 @@ setInterval(cleanCache, 1800000);
 
 // Bot login
 login(
-  { appState: JSON.parse(fs.readFileSync("appstate.json", "utf8")) },
+  { appState: appState },
   (err, api) => {
     if (err) return console.error(err);
+    console.log(`🚀 Bot running on port ${PORT}`);
 
     console.log("✅ Bot Login Success!");
 
