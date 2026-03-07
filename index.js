@@ -5,7 +5,7 @@ const axios = require("axios");
 const request = require("request");
 const express = require("express");
 
-// EXPRESS SERVER FOR RENDER
+// EXPRESS SERVER
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -17,7 +17,7 @@ app.listen(PORT, () => {
   console.log(`🌐 Server running on port ${PORT}`);
 });
 
-// Bot startup time
+// Bot startup
 const BOT_START_TIME = Date.now();
 
 // Commands
@@ -27,7 +27,7 @@ const COMMANDS = {
   uptime: "Show bot uptime"
 };
 
-// Check files
+// Check appstate
 if (!fs.existsSync("appstate.json")) {
   console.error("❌ appstate.json not found!");
   process.exit(1);
@@ -37,7 +37,7 @@ if (!fs.existsSync("appstate.json")) {
 const CACHE_DIR = path.join(__dirname, "cache");
 fs.ensureDirSync(CACHE_DIR);
 
-// Cache cleanup
+// Cleanup old cache
 function cleanCache() {
   fs.readdir(CACHE_DIR, (err, files) => {
     if (err) return;
@@ -49,22 +49,24 @@ function cleanCache() {
       fs.stat(filePath, (err, stats) => {
         if (err) return;
 
-        if (now - stats.mtimeMs > 3600000) {
+        if (now - stats.mtimeMs > 3600000) { // 1 hour
           fs.unlink(filePath).catch(() => {});
         }
       });
     });
   });
 }
+setInterval(cleanCache, 1800000); // every 30 minutes
 
-setInterval(cleanCache, 1800000);
+// Default User-Agent for all requests
+const DEFAULT_USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/115 Safari/537.36";
 
 // LOGIN
 login(
   {
     appState: JSON.parse(fs.readFileSync("appstate.json", "utf8")),
-    userAgent:
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/115 Safari/537.36"
+    userAgent: DEFAULT_USER_AGENT
   },
   (err, api) => {
     if (err) {
@@ -74,6 +76,7 @@ login(
 
     console.log("✅ Bot Login Success!");
 
+    // LISTEN
     api.listenMqtt((err, event) => {
       if (err) {
         console.error("Listen error:", err);
@@ -94,16 +97,17 @@ login(
         return;
       }
 
-      if (text === "hello") {
-        api.sendMessage("👋 Hello I am Aminul Bot", threadID, messageID);
-      }
-
-      if (text === "help") {
-        api.sendMessage(getHelpMessage(), threadID, messageID);
-      }
-
-      if (text === "uptime") {
-        api.sendMessage(`⏱ Bot Uptime: ${getUptime()}`, threadID, messageID);
+      // Commands
+      switch (text) {
+        case "hello":
+          api.sendMessage("👋 Hello! I am Aminul Bot", threadID, messageID);
+          break;
+        case "help":
+          api.sendMessage(getHelpMessage(), threadID, messageID);
+          break;
+        case "uptime":
+          api.sendMessage(`⏱ Bot Uptime: ${getUptime()}`, threadID, messageID);
+          break;
       }
     });
   }
@@ -129,7 +133,7 @@ function getHelpMessage() {
     msg += `/${cmd} - ${desc}\n`;
   }
 
-  msg += `\n📥 Send video URL to auto download`;
+  msg += `\n📥 Send a video URL to auto-download`;
 
   return msg;
 }
@@ -143,7 +147,9 @@ async function downloadVideo(url, threadID, messageID, api) {
       "https://aminul-rest-api-three.vercel.app/downloader/alldownloader?url=" +
       encodeURIComponent(url);
 
-    const res = await axios.get(apiURL);
+    const res = await axios.get(apiURL, {
+      headers: { "User-Agent": DEFAULT_USER_AGENT }
+    });
 
     const data = res?.data?.data?.data;
 
@@ -161,7 +167,7 @@ async function downloadVideo(url, threadID, messageID, api) {
 
     const filePath = path.join(CACHE_DIR, `video_${Date.now()}.mp4`);
 
-    request(videoURL)
+    request({ url: videoURL, headers: { "User-Agent": DEFAULT_USER_AGENT } })
       .pipe(fs.createWriteStream(filePath))
       .on("close", () => {
         api.sendMessage(
