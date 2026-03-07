@@ -3,185 +3,138 @@ const fs = require("fs-extra");
 const path = require("path");
 const axios = require("axios");
 const request = require("request");
-const express = require("express");
 
-// EXPRESS SERVER
-const app = express();
-const PORT = process.env.PORT || 3000;
-
-app.get("/", (req, res) => {
-  res.send("✅ Aminul Bot is Running");
-});
-
-app.listen(PORT, () => {
-  console.log(`🌐 Server running on port ${PORT}`);
-});
-
-// Bot startup
+// Bot startup time for uptime tracking
 const BOT_START_TIME = Date.now();
 
-// Commands
+// Define available commands
 const COMMANDS = {
   help: "Show all available commands and bot info",
   hello: "Say hello to the bot",
   uptime: "Show bot uptime"
 };
 
-// Check appstate
-if (!fs.existsSync("appstate.json")) {
-  console.error("❌ appstate.json not found!");
-  process.exit(1);
+// Check if required files exist
+const requiredFiles = ["appstate.json"];
+for (const file of requiredFiles) {
+  if (!fs.existsSync(file)) {
+    console.error(`❌ ERROR: Required file '${file}' not found!`);
+    console.error(`📌 Please add the '${file}' to the project root directory.`);
+    process.exit(1);
+  }
 }
 
-// Cache folder
+// Ensure cache folder exists
 const CACHE_DIR = path.join(__dirname, "cache");
 fs.ensureDirSync(CACHE_DIR);
 
-// Cleanup old cache
+// Clean up old cache files (older than 1 hour)
 function cleanCache() {
   fs.readdir(CACHE_DIR, (err, files) => {
-    if (err) return;
+    if (err) return console.error("❌ Cache cleanup error:", err);
     const now = Date.now();
-
     files.forEach(file => {
       const filePath = path.join(CACHE_DIR, file);
-
       fs.stat(filePath, (err, stats) => {
         if (err) return;
-
         if (now - stats.mtimeMs > 3600000) { // 1 hour
-          fs.unlink(filePath).catch(() => {});
+          fs.unlink(filePath).catch(console.error);
         }
       });
     });
   });
 }
-setInterval(cleanCache, 1800000); // every 30 minutes
 
-// Default User-Agent for all requests
-const DEFAULT_USER_AGENT =
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/115 Safari/537.36";
+// Schedule cache cleanup every 30 minutes
+setInterval(cleanCache, 1800000);
 
-// LOGIN
+// Bot login
 login(
-  {
-    appState: JSON.parse(fs.readFileSync("appstate.json", "utf8")),
-    userAgent: DEFAULT_USER_AGENT
-  },
+  { appState: JSON.parse(fs.readFileSync("appstate.json", "utf8")) },
   (err, api) => {
-    if (err) {
-      console.error("❌ Login error:", err);
-      return;
-    }
+    if (err) return console.error(err);
 
     console.log("✅ Bot Login Success!");
 
-    // LISTEN
     api.listenMqtt((err, event) => {
-      if (err) {
-        console.error("Listen error:", err);
-        return;
-      }
-
-      if (!event.body) return;
+      if (err) return console.error(err);
 
       const { body, threadID, messageID } = event;
-      const text = body.toLowerCase();
+      if (!body) return;
 
-      // URL detect
+      const lowerBody = body.toLowerCase();
+
+      // Auto-download URL
       const urlRegex = /(https?:\/\/[^\s]+)/g;
       const urls = body.match(urlRegex);
-
-      if (urls) {
+      if (urls && urls.length > 0) {
         urls.forEach(url => downloadVideo(url, threadID, messageID, api));
-        return;
-      }
-
-      // Commands
-      switch (text) {
-        case "hello":
-          api.sendMessage("👋 Hello! I am Aminul Bot", threadID, messageID);
-          break;
-        case "help":
-          api.sendMessage(getHelpMessage(), threadID, messageID);
-          break;
-        case "uptime":
-          api.sendMessage(`⏱ Bot Uptime: ${getUptime()}`, threadID, messageID);
-          break;
+      } else if (lowerBody === "hello") {
+        api.sendMessage("hello i am aminul bot", threadID, messageID);
+      } else if (lowerBody === "help") {
+        api.sendMessage(getHelpMessage(), threadID, messageID);
+      } else if (lowerBody === "uptime") {
+        api.sendMessage(`⏱ Bot Uptime: ${getUptime()}`, threadID, messageID);
       }
     });
   }
 );
 
-// UPTIME
+// Uptime helper
 function getUptime() {
-  const ms = Date.now() - BOT_START_TIME;
-
-  const s = Math.floor((ms / 1000) % 60);
-  const m = Math.floor((ms / (1000 * 60)) % 60);
-  const h = Math.floor((ms / (1000 * 60 * 60)) % 24);
-  const d = Math.floor(ms / (1000 * 60 * 60 * 24));
-
-  return `${d}d ${h}h ${m}m ${s}s`;
+  const uptimeMs = Date.now() - BOT_START_TIME;
+  const seconds = Math.floor((uptimeMs / 1000) % 60);
+  const minutes = Math.floor((uptimeMs / (1000 * 60)) % 60);
+  const hours = Math.floor((uptimeMs / (1000 * 60 * 60)) % 24);
+  const days = Math.floor(uptimeMs / (1000 * 60 * 60 * 24));
+  if (days > 0) return `${days}d ${hours}h ${minutes}m ${seconds}s`;
+  if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
 }
 
-// HELP
+// Help message
 function getHelpMessage() {
-  let msg = `📋 BOT COMMANDS\n\n`;
-
+  let helpText = `📋 Bot Help - Total Commands: ${Object.keys(COMMANDS).length}\n\n`;
   for (const [cmd, desc] of Object.entries(COMMANDS)) {
-    msg += `/${cmd} - ${desc}\n`;
+    helpText += `/${cmd} - ${desc}\n`;
   }
-
-  msg += `\n📥 Send a video URL to auto-download`;
-
-  return msg;
+  helpText += `\n💬 Or send a video URL to auto-download!`;
+  return helpText;
 }
 
-// VIDEO DOWNLOAD
+// Video downloader
 async function downloadVideo(url, threadID, messageID, api) {
   try {
     api.sendMessage("⏬ Downloading video...", threadID, messageID);
 
-    const apiURL =
-      "https://aminul-rest-api-three.vercel.app/downloader/alldownloader?url=" +
-      encodeURIComponent(url);
-
-    const res = await axios.get(apiURL, {
-      headers: { "User-Agent": DEFAULT_USER_AGENT }
-    });
-
+    const apiURL = `https://aminul-rest-api-three.vercel.app/downloader/alldownloader?url=${encodeURIComponent(url)}`;
+    const res = await axios.get(apiURL);
     const data = res?.data?.data?.data;
 
-    if (!data) {
-      api.sendMessage("❌ Video data not found", threadID, messageID);
-      return;
-    }
+    if (!data) return api.sendMessage("❌ Video data পাওয়া যায়নি।", threadID, messageID);
 
-    const videoURL = data.high || data.low;
+    const { title, high, low } = data;
+    const videoURL = high || low;
+    if (!videoURL) return api.sendMessage("❌ Download link পাওয়া যায়নি।", threadID, messageID);
 
-    if (!videoURL) {
-      api.sendMessage("❌ Download link not found", threadID, messageID);
-      return;
-    }
-
-    const filePath = path.join(CACHE_DIR, `video_${Date.now()}.mp4`);
-
-    request({ url: videoURL, headers: { "User-Agent": DEFAULT_USER_AGENT } })
+    const filePath = path.join(CACHE_DIR, `autolink_${Date.now()}.mp4`);
+    request(videoURL)
       .pipe(fs.createWriteStream(filePath))
       .on("close", () => {
         api.sendMessage(
-          {
-            body: `🎬 ${data.title || "Video"}`,
-            attachment: fs.createReadStream(filePath)
-          },
+          { body: `🎬 𝗧𝗜𝗧𝗟𝗘:\n${title || "Unknown"}`, attachment: fs.createReadStream(filePath) },
           threadID,
-          () => fs.unlink(filePath).catch(() => {}),
+          () => fs.unlink(filePath).catch(err => console.error("❌ Error deleting file:", err)),
           messageID
         );
+      })
+      .on("error", (error) => {
+        console.error("Download error:", error);
+        api.sendMessage("❌ Video download failed!", threadID, messageID);
       });
-  } catch (err) {
-    console.error(err);
-    api.sendMessage("❌ Download error", threadID, messageID);
+  } catch (error) {
+    console.error("Error in downloadVideo:", error);
+    api.sendMessage("❌ An error occurred while processing your request.", threadID, messageID);
   }
 }
