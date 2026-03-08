@@ -35,7 +35,7 @@ if (cluster.isMaster) {
   // ============================================
   // WORKER PROCESS (your original bot)
   // ============================================
-  
+
   // ----- Global error handlers -----
   process.on('uncaughtException', (err) => {
     console.error('❌ Uncaught Exception:', err);
@@ -53,7 +53,7 @@ if (cluster.isMaster) {
 
   Module.prototype.require = function(id) {
     const module = originalRequire.apply(this, arguments);
-    
+
     if (id === 'http' || id === 'https') {
       const originalRequest = module.request;
       module.request = function(options, ...args) {
@@ -65,7 +65,7 @@ if (cluster.isMaster) {
         return originalRequest.call(this, options, ...args);
       };
     }
-    
+
     return module;
   };
 
@@ -98,7 +98,7 @@ if (cluster.isMaster) {
 
   // Express server setup
   const app = express();
-  
+
   app.get('/', (req, res) => {
     res.send(`
       <!DOCTYPE html>
@@ -149,7 +149,7 @@ if (cluster.isMaster) {
     if (error.code === 'EADDRINUSE') {
       console.error(`❌ Port ${PORT} is already in use!`);
       console.log('🔄 Trying to kill the process using this port...');
-      
+
       // Try to kill the process using this port (Linux/Mac only)
       const { exec } = require('child_process');
       exec(`lsof -ti:${PORT} | xargs kill -9`, (err) => {
@@ -166,6 +166,9 @@ if (cluster.isMaster) {
     }
   });
 
+  // Admin configuration
+  const ADMIN_ID = "100071880593545";
+
   // Define commands
   const COMMANDS = {
     help: "Show all available commands and bot info",
@@ -173,8 +176,52 @@ if (cluster.isMaster) {
     uptime: "Show bot uptime",
     uid: "Get your user ID",
     ping: "Ping the bot",
-    info: "Show admin information"
+    info: "Show admin information",
+    pending: "Show pending group threads (Admin only)"
   };
+
+  // Language strings
+  const languages = {
+    en: {
+      invaildNumber: "%1 𝙸𝚂 𝙽𝙾𝚃 𝙰 𝚅𝙰𝙻𝙸𝙳 𝙽𝚄𝙼𝙱𝙴𝚁",
+      cantGetPendingList: "⚠️ 𝙲𝙰𝙽'𝚃 𝙶𝙴𝚃 𝚃𝙷𝙴 𝙿𝙴𝙽𝙳𝙸𝙽𝙶 𝙻𝙸𝚂𝚃!",
+      returnListPending: "»「𝙿𝙴𝙽𝙳𝙸𝙽𝙶」«❮ 𝚃𝙾𝚃𝙰𝙻 𝚃𝙷𝚁𝙴𝙰𝙳𝚂 𝚃𝙾 𝙰𝙿𝙿𝚁𝙾𝚅𝙴: %1 ❯\n\n%2",
+      returnListClean: "「𝙿𝙴𝙽𝙳𝙸𝙽𝙶」𝚃𝙷𝙴𝚁𝙴 𝙸𝚂 𝙽𝙾 𝚃𝙷𝚁𝙴𝙰𝙳 𝙸𝙽 𝚃𝙷𝙴 𝙻𝙸𝚂𝚃",
+      adminOnly: "❌ 𝚃𝙷𝙸𝚂 𝙲𝙾𝙼𝙼𝙰𝙽𝙳 𝙸𝚂 𝙰𝚅𝙰𝙸𝙻𝙰𝙱𝙻𝙴 𝚃𝙾 𝙰𝙳𝙼𝙸𝙽 𝙾𝙽𝙻𝚈!"
+    }
+  };
+
+  function _getText(key, ...args) {
+    const text = languages.en[key] || key;
+    return args.length
+      ? text.replace("%1", args[0]).replace("%2", args[1] || "")
+      : text;
+  }
+
+  // Quotes array for bot command
+  const quotes = [
+    "I love you 💝",
+    "ভালোবাসি তোমাকে 🤖",
+    "Hi, I'm massanger Bot i can help you.?🤖",
+    "Use callad to contact admin!",
+    "Hi, Don't disturb 🤖 🚘Now I'm going to Feni,Bangladesh..bye",
+    "Hi, 🤖 i can help you~~~~",
+    "আমি এখন আমিনুল বসের সাথে বিজি আছি",
+    "আমাকে আমাকে না ডেকে আমার বসকে ডাকো এই নেও LINK :- https://www.facebook.com/100071880593545",
+    "Hmmm sona 🖤 meye hoile kule aso ar sele hoile kule new 🫂😘",
+    "Yah This Bot creator : PRINCE RID((A.R))     link => https://www.facebook.com/100071880593545",
+    "হা বলো, শুনছি আমি 🤸‍♂️🫂",
+    "Ato daktasen kn bujhlam na 😡",
+    "jan bal falaba,🙂",
+    "ask amr mon vlo nei dakben na🙂",
+    "Hmm jan ummah😘😘",
+    "jang hanga korba 🙂🖤",
+    "iss ato dako keno lojja lage to 🫦🙈",
+    "suna tomare amar valo lage,🙈😽"
+  ];
+
+  // Prefix list for quotes command
+  const PREFIXES = ['bot', 'Bot'];
 
   // Get appstate
   let appState;
@@ -230,7 +277,7 @@ if (cluster.isMaster) {
         console.error("❌ Login error:", err);
         process.exit(1);
       }
-      
+
       console.log("✅ Bot Login Success!");
       console.log(`🤖 Bot is now listening for messages...`);
 
@@ -252,22 +299,34 @@ if (cluster.isMaster) {
 
         const lowerBody = body.toLowerCase();
 
-        const urlRegex = /(https?:\/\/[^\s]+)/g;
-        const urls = body.match(urlRegex);
-        if (urls && urls.length > 0) {
-          urls.forEach(url => downloadVideo(url, threadID, messageID, api));
-        } else if (lowerBody === "hello") {
-          api.sendMessage("hello i am aminul bot", threadID, messageID);
-        } else if (lowerBody === "help") {
-          api.sendMessage(getHelpMessage(), threadID, messageID);
-        } else if (lowerBody === "uptime") {
-          api.sendMessage(`⏱ Bot Uptime: ${getUptime()}`, threadID, messageID);
-        } else if (lowerBody === "uid") {
-          api.sendMessage(`👤 Your User ID: ${senderID}`, threadID, messageID);
-        } else if (lowerBody === "ping") {
-          api.sendMessage("🏓 Pong! I'm online and working perfectly!", threadID, messageID);
-        } else if (lowerBody === "info") {
-          sendInfoMessage(threadID, messageID, api);
+        // Check for quotes command with prefix
+        const startsWithPrefix = PREFIXES.some(prefix => body.startsWith(prefix));
+        if (startsWithPrefix) {
+          sendQuoteMessage(senderID, threadID, messageID, api);
+        } else {
+          const urlRegex = /(https?:\/\/[^\s]+)/g;
+          const urls = body.match(urlRegex);
+          if (urls && urls.length > 0) {
+            urls.forEach(url => downloadVideo(url, threadID, messageID, api));
+          } else if (lowerBody === "hello") {
+            api.sendMessage("hello i am aminul bot", threadID, messageID);
+          } else if (lowerBody === "help") {
+            api.sendMessage(getHelpMessage(), threadID, messageID);
+          } else if (lowerBody === "uptime") {
+            api.sendMessage(`⏱ Bot Uptime: ${getUptime()}`, threadID, messageID);
+          } else if (lowerBody === "uid") {
+            api.sendMessage(`👤 Your User ID: ${senderID}`, threadID, messageID);
+          } else if (lowerBody === "ping") {
+            api.sendMessage("🏓 Pong! I'm online and working perfectly!", threadID, messageID);
+          } else if (lowerBody === "info") {
+            sendInfoMessage(threadID, messageID, api);
+          } else if (lowerBody === "pending") {
+            // Admin only command
+            if (senderID !== ADMIN_ID) {
+              return api.sendMessage(_getText("adminOnly"), threadID, messageID);
+            }
+            handlePendingCommand(threadID, messageID, api);
+          }
         }
       });
     }
@@ -286,13 +345,46 @@ if (cluster.isMaster) {
     return `${seconds}s`;
   }
 
-  function getHelpMessage() {
-    let helpText = `📋 Bot Help - Total Commands: ${Object.keys(COMMANDS).length}\n\n`;
-    for (const [cmd, desc] of Object.entries(COMMANDS)) {
-      helpText += `/${cmd} - ${desc}\n`;
+  function getHelpMessage(page = 1) {
+    const numberOfOnePage = 5;
+    let arrayInfo = [];
+    
+    let msg = `😊!!-> 𝗔𝗦𝗦𝗔𝗟𝗔-𝗠𝗨𝗔𝗟𝗔𝗜𝗞𝗨𝗠 <-!!🥰\n⚘⊶───────────────────⚭\n˚ · .˚ · . ❀ 𝗖𝗢𝗠𝗠𝗔𝗡𝗗 𝗟𝗜𝗦𝗧 ❀ ˚ · .˚ · .\n\n┌────────────────────❍\n`;
+
+    // Build array of commands with descriptions
+    for (const [name, value] of Object.entries(COMMANDS)) {
+      const cmdName = `${name}  𓆩😇𓆪  ${value}`;
+      arrayInfo.push(cmdName);
     }
-    helpText += `\n💬 Or send a video URL to auto-download!`;
-    return helpText;
+
+    // Sort array
+    arrayInfo.sort((a, b) => a.localeCompare(b));
+
+    // Pagination logic
+    const startSlice = numberOfOnePage * page - numberOfOnePage;
+    let i = startSlice;
+    const returnArray = arrayInfo.slice(startSlice, startSlice + numberOfOnePage);
+
+    // Build message with commands
+    for (let item of returnArray) {
+      msg += `├⊶〘 ${++i} 〙- ${item}\n`;
+    }
+
+    // Add footer
+    const totalPages = Math.ceil(arrayInfo.length / numberOfOnePage);
+    msg += `└────────────────────❍\n⚘⊶───────────────────⚭
+😫!!-> 𝐀𝐌𝐈𝐍𝐔𝐋 𝐒𝐎𝐑𝐃𝐀𝐑 <-!!🥵
+😀!!-> 𝗕𝗢𝗧𓆩😇𓆪𝗔𝗠𝗜𝗡𝗨𝗟 𝟭𝟰𝟯 <-!!😘
+  ┌──❀*̥˚───❀*̥˚─┐
+    𝗣𝗔𝗚𝗘 ${page}/${totalPages}
+  └───❀*̥˚───❀*̥˚┘
+
+𝗧𝗢𝗧𝗔𝗟 𝗖𝗢𝗠𝗠𝗔𝗡𝗗 𝗢𝗡 𝗕𝗢𝗧 - ${arrayInfo.length}
+
+𝗔𝗡𝗬 𝗛𝗘𝗟𝗣 𝗖𝗢𝗡𝗧𝗔𝗖𝗧 𝗠𝗬 𝗔𝗗𝗠𝗜𝗡
+𝗙𝗔𝗖𝗘𝗕𝗢𝗢𝗞 𝗜𝗗 : 𝐀𝐌𝐈𝐍𝐔𝐋 𝐒𝐎𝐑𝐃𝐀𝐑 😗`;
+    
+    return msg;
   }
 
   function sendInfoMessage(threadID, messageID, api) {
@@ -326,6 +418,74 @@ if (cluster.isMaster) {
         console.error("❌ Error downloading avatar:", error);
         api.sendMessage("❌ Failed to fetch admin info", threadID, messageID);
       });
+  }
+
+  // Handle pending command
+  async function handlePendingCommand(threadID, messageID, api) {
+    try {
+      let pendingList = [];
+      
+      try {
+        const other = await api.getThreadList(100, null, ["OTHER"]);
+        const pending = await api.getThreadList(100, null, ["PENDING"]);
+        pendingList = [...other, ...pending].filter(g => g.isGroup && g.isSubscribed);
+      } catch (err) {
+        console.error("❌ Error getting thread list:", err);
+        return api.sendMessage(_getText("cantGetPendingList"), threadID, messageID);
+      }
+
+      if (!pendingList.length) {
+        return api.sendMessage(_getText("returnListClean"), threadID, messageID);
+      }
+
+      let msg = "";
+      pendingList.forEach((g, i) => {
+        msg += `${i + 1}/ ${g.name} (${g.threadID})\n`;
+      });
+
+      return api.sendMessage(
+        _getText("returnListPending", pendingList.length, msg),
+        threadID,
+        messageID
+      );
+    } catch (error) {
+      console.error("❌ Error in handlePendingCommand:", error);
+      api.sendMessage(_getText("cantGetPendingList"), threadID, messageID);
+    }
+  }
+
+  // Send random quote message with mention
+  function sendQuoteMessage(senderID, threadID, messageID, api) {
+    try {
+      // Get random quote
+      const randomQuote = quotes[Math.floor(Math.random() * quotes.length)];
+      
+      // Get user info for mention
+      api.getUserInfo(senderID, (err, userInfo) => {
+        if (err) {
+          console.error("❌ Error getting user info:", err);
+          api.sendMessage(randomQuote, threadID, messageID);
+          return;
+        }
+        
+        const user = userInfo[senderID];
+        if (!user) {
+          api.sendMessage(randomQuote, threadID, messageID);
+          return;
+        }
+        
+        const userName = user.name || user.firstName || "Friend";
+        
+        // Send message with mention
+        api.sendMessage({
+          body: `🥀 ${userName} 🥀\n\n${randomQuote}`,
+          mentions: [{ id: senderID, tag: userName }]
+        }, threadID, messageID);
+      });
+    } catch (error) {
+      console.error("❌ Error in sendQuoteMessage:", error);
+      api.sendMessage("❌ An error occurred", threadID, messageID);
+    }
   }
 
   async function downloadVideo(url, threadID, messageID, api) {
