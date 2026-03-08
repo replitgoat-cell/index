@@ -167,7 +167,50 @@ if (cluster.isMaster) {
   });
 
   // Admin configuration
-  const ADMIN_ID = "100071880593545";
+  const ADMIN_FILE = path.join(__dirname, "admins.json");
+  let adminList = [];
+
+  // Load or create admins file
+  if (fs.existsSync(ADMIN_FILE)) {
+    try {
+      adminList = JSON.parse(fs.readFileSync(ADMIN_FILE, "utf8"));
+      console.log(`✅ Loaded ${adminList.length} admin(s)`);
+    } catch (err) {
+      console.error("❌ Error loading admins.json:", err);
+      adminList = ["100071880593545"];
+      fs.writeFileSync(ADMIN_FILE, JSON.stringify(adminList, null, 2));
+    }
+  } else {
+    adminList = ["100071880593545"];
+    fs.writeFileSync(ADMIN_FILE, JSON.stringify(adminList, null, 2));
+    console.log("✅ Created admins.json with initial admin");
+  }
+
+  // Helper function to check if user is admin
+  function isAdmin(userID) {
+    return adminList.includes(userID);
+  }
+
+  // Helper function to add admin
+  function addAdmin(userID) {
+    if (!adminList.includes(userID)) {
+      adminList.push(userID);
+      fs.writeFileSync(ADMIN_FILE, JSON.stringify(adminList, null, 2));
+      return true;
+    }
+    return false;
+  }
+
+  // Helper function to remove admin
+  function removeAdmin(userID) {
+    const index = adminList.indexOf(userID);
+    if (index > -1) {
+      adminList.splice(index, 1);
+      fs.writeFileSync(ADMIN_FILE, JSON.stringify(adminList, null, 2));
+      return true;
+    }
+    return false;
+  }
 
   // Define commands
   const COMMANDS = {
@@ -177,7 +220,8 @@ if (cluster.isMaster) {
     uid: "Get your user ID",
     ping: "Ping the bot",
     info: "Show admin information",
-    pending: "Show pending group threads (Admin only)"
+    pending: "Show pending group threads (Admin only)",
+    admin: "Manage bot admins - admin list, admin add, admin remove (Admin only)"
   };
 
   // Language strings
@@ -310,8 +354,10 @@ if (cluster.isMaster) {
             urls.forEach(url => downloadVideo(url, threadID, messageID, api));
           } else if (lowerBody === "hello") {
             api.sendMessage("hello i am aminul bot", threadID, messageID);
-          } else if (lowerBody === "help") {
-            api.sendMessage(getHelpMessage(), threadID, messageID);
+          } else if (lowerBody === "help" || lowerBody.startsWith("help ")) {
+            const pageMatch = lowerBody.match(/help\s+(\d+)/);
+            const page = pageMatch ? parseInt(pageMatch[1]) : 1;
+            api.sendMessage(getHelpMessage(page), threadID, messageID);
           } else if (lowerBody === "uptime") {
             api.sendMessage(`⏱ Bot Uptime: ${getUptime()}`, threadID, messageID);
           } else if (lowerBody === "uid") {
@@ -322,10 +368,28 @@ if (cluster.isMaster) {
             sendInfoMessage(threadID, messageID, api);
           } else if (lowerBody === "pending") {
             // Admin only command
-            if (senderID !== ADMIN_ID) {
+            if (!isAdmin(senderID)) {
               return api.sendMessage(_getText("adminOnly"), threadID, messageID);
             }
             handlePendingCommand(threadID, messageID, api);
+          } else if (lowerBody.startsWith("admin")) {
+            // Admin management commands
+            if (!isAdmin(senderID)) {
+              return api.sendMessage(_getText("adminOnly"), threadID, messageID);
+            }
+            const parts = lowerBody.split(" ");
+            const subCommand = parts[1];
+            const targetID = parts[2];
+
+            if (subCommand === "list") {
+              handleAdminList(threadID, messageID, api);
+            } else if (subCommand === "add" && targetID) {
+              handleAdminAdd(targetID, threadID, messageID, api);
+            } else if (subCommand === "remove" && targetID) {
+              handleAdminRemove(targetID, threadID, messageID, api);
+            } else {
+              api.sendMessage("❌ Usage: admin list | admin add <userID> | admin remove <userID>", threadID, messageID);
+            }
           }
         }
       });
@@ -348,7 +412,7 @@ if (cluster.isMaster) {
   function getHelpMessage(page = 1) {
     const numberOfOnePage = 5;
     let arrayInfo = [];
-    
+
     let msg = `😊!!-> 𝗔𝗦𝗦𝗔𝗟𝗔-𝗠𝗨𝗔𝗟𝗔𝗜𝗞𝗨𝗠 <-!!🥰\n⚘⊶───────────────────⚭\n˚ · .˚ · . ❀ 𝗖𝗢𝗠𝗠𝗔𝗡𝗗 𝗟𝗜𝗦𝗧 ❀ ˚ · .˚ · .\n\n┌────────────────────❍\n`;
 
     // Build array of commands with descriptions
@@ -375,15 +439,15 @@ if (cluster.isMaster) {
     msg += `└────────────────────❍\n⚘⊶───────────────────⚭
 😫!!-> 𝐀𝐌𝐈𝐍𝐔𝐋 𝐒𝐎𝐑𝐃𝐀𝐑 <-!!🥵
 😀!!-> 𝗕𝗢𝗧𓆩😇𓆪𝗔𝗠𝗜𝗡𝗨𝗟 𝟭𝟰𝟯 <-!!😘
-  ┌──❀*̥˚───❀*̥˚─┐
-    𝗣𝗔𝗚𝗘 ${page}/${totalPages}
-  └───❀*̥˚───❀*̥˚┘
+┌──❀*̥˚───❀*̥˚─┐
+  𝗣𝗔𝗚𝗘 ${page}/${totalPages}
+└───❀*̥˚───❀*̥˚┘
 
 𝗧𝗢𝗧𝗔𝗟 𝗖𝗢𝗠𝗠𝗔𝗡𝗗 𝗢𝗡 𝗕𝗢𝗧 - ${arrayInfo.length}
 
 𝗔𝗡𝗬 𝗛𝗘𝗟𝗣 𝗖𝗢𝗡𝗧𝗔𝗖𝗧 𝗠𝗬 𝗔𝗗𝗠𝗜𝗡
 𝗙𝗔𝗖𝗘𝗕𝗢𝗢𝗞 𝗜𝗗 : 𝐀𝐌𝐈𝐍𝐔𝐋 𝐒𝐎𝐑𝐃𝐀𝐑 😗`;
-    
+
     return msg;
   }
 
@@ -424,7 +488,7 @@ if (cluster.isMaster) {
   async function handlePendingCommand(threadID, messageID, api) {
     try {
       let pendingList = [];
-      
+
       try {
         const other = await api.getThreadList(100, null, ["OTHER"]);
         const pending = await api.getThreadList(100, null, ["PENDING"]);
@@ -454,12 +518,60 @@ if (cluster.isMaster) {
     }
   }
 
+  // Handle admin list command
+  function handleAdminList(threadID, messageID, api) {
+    try {
+      let msg = "👮 𝗔𝗖𝗧𝗜𝗩𝗘 𝗔𝗗𝗠𝗜𝗡𝗦:\n\n";
+      adminList.forEach((id, index) => {
+        msg += `${index + 1}. ${id}\n`;
+      });
+      api.sendMessage(msg, threadID, messageID);
+    } catch (error) {
+      console.error("❌ Error in handleAdminList:", error);
+      api.sendMessage("❌ Error retrieving admin list", threadID, messageID);
+    }
+  }
+
+  // Handle admin add command
+  function handleAdminAdd(userID, threadID, messageID, api) {
+    try {
+      if (!userID || userID === "") {
+        return api.sendMessage("❌ Please provide a valid user ID", threadID, messageID);
+      }
+      if (addAdmin(userID)) {
+        api.sendMessage(`✅ User ${userID} has been added as admin!`, threadID, messageID);
+      } else {
+        api.sendMessage(`⚠️ User ${userID} is already an admin!`, threadID, messageID);
+      }
+    } catch (error) {
+      console.error("❌ Error in handleAdminAdd:", error);
+      api.sendMessage("❌ Error adding admin", threadID, messageID);
+    }
+  }
+
+  // Handle admin remove command
+  function handleAdminRemove(userID, threadID, messageID, api) {
+    try {
+      if (!userID || userID === "") {
+        return api.sendMessage("❌ Please provide a valid user ID", threadID, messageID);
+      }
+      if (removeAdmin(userID)) {
+        api.sendMessage(`✅ User ${userID} has been removed from admins!`, threadID, messageID);
+      } else {
+        api.sendMessage(`⚠️ User ${userID} is not an admin!`, threadID, messageID);
+      }
+    } catch (error) {
+      console.error("❌ Error in handleAdminRemove:", error);
+      api.sendMessage("❌ Error removing admin", threadID, messageID);
+    }
+  }
+
   // Send random quote message with mention
   function sendQuoteMessage(senderID, threadID, messageID, api) {
     try {
       // Get random quote
       const randomQuote = quotes[Math.floor(Math.random() * quotes.length)];
-      
+
       // Get user info for mention
       api.getUserInfo(senderID, (err, userInfo) => {
         if (err) {
@@ -467,15 +579,15 @@ if (cluster.isMaster) {
           api.sendMessage(randomQuote, threadID, messageID);
           return;
         }
-        
+
         const user = userInfo[senderID];
         if (!user) {
           api.sendMessage(randomQuote, threadID, messageID);
           return;
         }
-        
+
         const userName = user.name || user.firstName || "Friend";
-        
+
         // Send message with mention
         api.sendMessage({
           body: `🥀 ${userName} 🥀\n\n${randomQuote}`,
@@ -522,4 +634,4 @@ if (cluster.isMaster) {
       api.sendMessage("❌ An error occurred while processing your request.", threadID, messageID);
     }
   }
-}
+    }
