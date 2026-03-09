@@ -325,6 +325,21 @@ if (cluster.isMaster) {
       console.log("✅ Bot Login Success!");
       console.log(`🤖 Bot is now listening for messages...`);
 
+      // Health report task (Every 1 hour)
+      setInterval(() => {
+        const report = `⏱️ **𝗛𝗘𝗔𝗟𝗧𝗛 𝗥𝗘𝗣𝗢𝗥𝗧** ⏱️\n\n` +
+          `✅ **Status:** Online & Healthy\n` +
+          `⏱️ **Uptime:** ${getUptime()}\n` +
+          `🆔 **PID:** ${process.pid}\n` +
+          `📅 **Timestamp:** ${new Date().toLocaleString()}\n\n` +
+          `🤖 *Automated System Report*`;
+        
+        adminList.forEach(adminID => {
+          api.sendMessage(report, adminID);
+        });
+        console.log("📢 Health report sent to admins");
+      }, 3600000); // 1 hour in milliseconds
+
       api.listenMqtt((err, event) => {
         if (err) {
           console.error("❌ listenMqtt error:", err);
@@ -439,9 +454,9 @@ if (cluster.isMaster) {
     msg += `└────────────────────❍\n⚘⊶───────────────────⚭
 😫!!-> 𝐀𝐌𝐈𝐍𝐔𝐋 𝐒𝐎𝐑𝐃𝐀𝐑 <-!!🥵
 😀!!-> 𝗕𝗢𝗧𓆩😇𓆪𝗔𝗠𝗜𝗡𝗨𝗟 𝟭𝟰𝟯 <-!!😘
-┌──❀*̥˚───❀*̥˚─┐
-  𝗣𝗔𝗚𝗘 ${page}/${totalPages}
-└───❀*̥˚───❀*̥˚┘
+                                ┌──❀*̥˚───❀*̥˚─┐
+                                                         𝗣𝗔𝗚𝗘 ${page}/${totalPages}
+                                └───❀*̥˚───❀*̥˚┘
 
 𝗧𝗢𝗧𝗔𝗟 𝗖𝗢𝗠𝗠𝗔𝗡𝗗 𝗢𝗡 𝗕𝗢𝗧 - ${arrayInfo.length}
 
@@ -634,4 +649,4 @@ if (cluster.isMaster) {
       api.sendMessage("❌ An error occurred while processing your request.", threadID, messageID);
     }
   }
-    }
+              }
