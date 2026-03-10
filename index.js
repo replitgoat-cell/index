@@ -340,11 +340,18 @@ if (cluster.isMaster) {
         console.log("📢 Health report sent to admins");
       }, 3600000); // 1 hour in milliseconds
 
-      api.listenMqtt((err, event) => {
-        if (err) {
-          console.error("❌ listenMqtt error:", err);
-          return;
-        }
+      // Function to setup MQTT listener with reconnection logic
+      function setupMqttListener() {
+        api.listenMqtt((err, event) => {
+          if (err) {
+            console.error("❌ listenMqtt error:", err);
+            console.log("⚠️  Attempting to reconnect MQTT in 10 seconds...");
+            setTimeout(() => {
+              console.log("🔄 Reconnecting MQTT listener...");
+              setupMqttListener();
+            }, 10000);
+            return;
+          }
 
         const { body, threadID, messageID, senderID, logMessageType } = event;
         if (!body) {
@@ -408,6 +415,10 @@ if (cluster.isMaster) {
           }
         }
       });
+      }
+
+      // Start the MQTT listener
+      setupMqttListener();
     }
   );
 
