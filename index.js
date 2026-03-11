@@ -33,7 +33,7 @@ if (cluster.isMaster) {
 
 } else {
   // ============================================
-  // WORKER PROCESS (your original bot with fixes)
+  // WORKER PROCESS (fixed bot)
   // ============================================
 
   // ----- Global error handlers -----
@@ -47,10 +47,10 @@ if (cluster.isMaster) {
     setTimeout(() => process.exit(1), 1000);
   });
 
-  // Set process title for easier identification
+  // Set process title
   process.title = `aminul-bot-worker-${process.pid}`;
 
-  // ----- Your original code with User-Agent patches -----
+  // ----- User-Agent patches -----
   const Module = require('module');
   const originalRequire = Module.prototype.require;
 
@@ -88,18 +88,19 @@ if (cluster.isMaster) {
     return OriginalSetHeader.call(this, name, value);
   };
 
+  // ----- Dependencies -----
   const login = require("aminul-new-fca");
   const fs = require("fs-extra");
   const path = require("path");
   const axios = require("axios");
   const request = require("request");
 
-  // Configuration
+  // ----- Configuration -----
   const PORT = process.env.PORT || 3000;
   const APPSTATE_JSON = process.env.APPSTATE_JSON;
   const BOT_START_TIME = Date.now();
 
-  // Express server setup
+  // ----- Express Server (for health checks) -----
   const app = express();
 
   app.get('/', (req, res) => {
@@ -123,7 +124,6 @@ if (cluster.isMaster) {
           <div class="status">
             <p>✅ Bot is running successfully!</p>
             <p>⏱ Uptime: ${getUptime()}</p>
-            <p>📊 Total Commands: ${Object.keys(COMMANDS).length}</p>
             <p>🆔 Process ID: ${process.pid}</p>
           </div>
         </div>
@@ -132,36 +132,30 @@ if (cluster.isMaster) {
     `);
   });
 
-  // Enhanced health check endpoint
+  // Health check endpoint
   app.get('/health', (req, res) => {
-    const isBotAlive = mqttListener && mqttListener.listening;
     res.json({ 
-      status: isBotAlive ? 'healthy' : 'degraded',
-      bot_status: isBotAlive ? 'listening' : 'disconnected',
+      status: 'healthy',
       uptime: getUptime(),
       pid: process.pid,
-      message_queue: messageQueue.length,
-      reconnect_attempts: reconnectAttempts,
       timestamp: new Date().toISOString()
     });
   });
 
   // Start web server
   const server = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🌐 Web server is running on port ${PORT}`);
+    console.log(`🌐 Web server running on port ${PORT}`);
     console.log(`📡 Health check: http://localhost:${PORT}/health`);
   });
 
   server.on('error', (error) => {
     if (error.code === 'EADDRINUSE') {
       console.error(`❌ Port ${PORT} is already in use!`);
-      console.log('🔄 Trying to kill the process using this port...');
-
-      // Try to kill the process using this port (Linux/Mac only)
+      console.log('🔄 Trying to free the port...');
       const { exec } = require('child_process');
       exec(`lsof -ti:${PORT} | xargs kill -9`, (err) => {
         if (err) {
-          console.error('❌ Could not kill the process. Please manually free the port.');
+          console.error('❌ Could not free port. Exiting.');
           process.exit(1);
         } else {
           console.log('✅ Port freed. Restarting...');
@@ -173,7 +167,7 @@ if (cluster.isMaster) {
     }
   });
 
-  // Admin configuration
+  // ----- Admin Configuration -----
   const ADMIN_FILE = path.join(__dirname, "admins.json");
   let adminList = [];
 
@@ -193,12 +187,11 @@ if (cluster.isMaster) {
     console.log("✅ Created admins.json with initial admin");
   }
 
-  // Helper function to check if user is admin
+  // Admin helper functions
   function isAdmin(userID) {
     return adminList.includes(userID);
   }
 
-  // Helper function to add admin
   function addAdmin(userID) {
     if (!adminList.includes(userID)) {
       adminList.push(userID);
@@ -208,7 +201,6 @@ if (cluster.isMaster) {
     return false;
   }
 
-  // Helper function to remove admin
   function removeAdmin(userID) {
     const index = adminList.indexOf(userID);
     if (index > -1) {
@@ -219,27 +211,28 @@ if (cluster.isMaster) {
     return false;
   }
 
-  // Define commands
+  // ----- Commands List -----
   const COMMANDS = {
-    help: "Show all available commands and bot info",
+    help: "Show all available commands",
     hello: "Say hello to the bot",
     uptime: "Show bot uptime",
     uid: "Get your user ID",
     ping: "Ping the bot",
     info: "Show admin information",
     pending: "Show pending group threads (Admin only)",
-    admin: "Manage bot admins - admin list, admin add, admin remove (Admin only)",
-    "restart bot": "Restart the bot (Admin only)"
+    admin: "Manage bot admins (Admin only)",
+    "restart": "Restart the bot (Admin only)",
+    "bot": "Get a random quote (any message starting with 'bot')"
   };
 
   // Language strings
   const languages = {
     en: {
-      invaildNumber: "%1 𝙸𝚂 𝙽𝙾𝚃 𝙰 𝚅𝙰𝙻𝙸𝙳 𝙽𝚄𝙼𝙱𝙴𝚁",
-      cantGetPendingList: "⚠️ 𝙲𝙰𝙽'𝚃 𝙶𝙴𝚃 𝚃𝙷𝙴 𝙿𝙴𝙽𝙳𝙸𝙽𝙶 𝙻𝙸𝚂𝚃!",
-      returnListPending: "»「𝙿𝙴𝙽𝙳𝙸𝙽𝙶」«❮ 𝚃𝙾𝚃𝙰𝙻 𝚃𝙷𝚁𝙴𝙰𝙳𝚂 𝚃𝙾 𝙰𝙿𝙿𝚁𝙾𝚅𝙴: %1 ❯\n\n%2",
-      returnListClean: "「𝙿𝙴𝙽𝙳𝙸𝙽𝙶」𝚃𝙷𝙴𝚁𝙴 𝙸𝚂 𝙽𝙾 𝚃𝙷𝚁𝙴𝙰𝙳 𝙸𝙽 𝚃𝙷𝙴 𝙻𝙸𝚂𝚃",
-      adminOnly: "❌ 𝚃𝙷𝙸𝚂 𝙲𝙾𝙼𝙼𝙰𝙽𝙳 𝙸𝚂 𝙰𝚅𝙰𝙸𝙻𝙰𝙱𝙻𝙴 𝚃𝙾 𝙰𝙳𝙼𝙸𝙽 𝙾𝙽𝙻𝚈!"
+      invaildNumber: "%1 IS NOT A VALID NUMBER",
+      cantGetPendingList: "⚠️ CAN'T GET THE PENDING LIST!",
+      returnListPending: "»「PENDING」«❮ TOTAL THREADS TO APPROVE: %1 ❯\n\n%2",
+      returnListClean: "「PENDING」THERE IS NO THREAD IN THE LIST",
+      adminOnly: "❌ THIS COMMAND IS FOR ADMINS ONLY!"
     }
   };
 
@@ -250,18 +243,18 @@ if (cluster.isMaster) {
       : text;
   }
 
-  // Quotes array for bot command
+  // Quotes array
   const quotes = [
     "I love you 💝",
     "ভালোবাসি তোমাকে 🤖",
-    "Hi, I'm massanger Bot i can help you.?🤖",
+    "Hi, I'm messenger Bot i can help you.?🤖",
     "Use callad to contact admin!",
     "Hi, Don't disturb 🤖 🚘Now I'm going to Feni,Bangladesh..bye",
     "Hi, 🤖 i can help you~~~~",
     "আমি এখন আমিনুল বসের সাথে বিজি আছি",
-    "আমাকে আমাকে না ডেকে আমার বসকে ডাকো এই নেও LINK :- https://www.facebook.com/100071880593545",
-    "Hmmm sona 🖤 meye hoile kule aso ar sele hoile kule new 🫂😘",
-    "Yah This Bot creator : PRINCE RID((A.R))   link => https://www.facebook.com/100071880593545",
+    "আমাকে না ডেকে আমার বসকে ডাকো LINK :- https://www.facebook.com/100071880593545",
+    "Hmmm sona 🖤",
+    "Yah This Bot creator : PRINCE RID((A.R)) link => https://www.facebook.com/100071880593545",
     "হা বলো, শুনছি আমি 🤸‍♂️🫂",
     "Ato daktasen kn bujhlam na 😡",
     "jan bal falaba,🙂",
@@ -273,9 +266,9 @@ if (cluster.isMaster) {
   ];
 
   // Prefix list for quotes command
-  const PREFIXES = ['bot', 'Bot'];
+  const PREFIXES = ['bot', 'Bot', 'বট'];
 
-  // Get appstate
+  // ----- AppState Loading -----
   let appState;
   if (APPSTATE_JSON) {
     try {
@@ -298,7 +291,7 @@ if (cluster.isMaster) {
     process.exit(1);
   }
 
-  // Cache directory
+  // ----- Cache Directory -----
   const CACHE_DIR = path.join(__dirname, "cache");
   fs.ensureDirSync(CACHE_DIR);
 
@@ -321,116 +314,123 @@ if (cluster.isMaster) {
 
   setInterval(cleanCache, 1800000);
 
-  // ---------- FIXES START HERE ----------
-  // MQTT listener variables
+  // ============== FIXED MESSAGE HANDLER ==============
+  
+  // Variables for MQTT
   let mqttListener = null;
   let reconnectAttempts = 0;
-  const MAX_RECONNECT_ATTEMPTS = 10;
-  const messageQueue = [];
-  let processingQueue = false;
 
-  // Process message queue to prevent overload
-  async function processMessageQueue() {
-    if (processingQueue || messageQueue.length === 0) return;
-    
-    processingQueue = true;
-    
-    while (messageQueue.length > 0) {
-      const { event, api } = messageQueue.shift();
-      try {
-        await handleMessage(event, api);
-      } catch (error) {
-        console.error("❌ Error processing queued message:", error);
-      }
-      // Small delay between messages
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
-    
-    processingQueue = false;
-  }
-
-  // Handle incoming messages
+  // Handle incoming messages - IMPROVED VERSION
   async function handleMessage(event, api) {
     const { body, threadID, messageID, senderID } = event;
     
     if (!body) return;
 
-    const lowerBody = body.toLowerCase();
+    // Normalize message
+    const originalMessage = body;
+    const lowercaseMessage = body.trim().toLowerCase();
+    const words = lowercaseMessage.split(' ');
+
+    console.log(`📨 New message: "${originalMessage}" from ${senderID} in thread ${threadID}`);
 
     try {
-      // Check for quotes command with prefix
-      const startsWithPrefix = PREFIXES.some(prefix => body.startsWith(prefix));
-      if (startsWithPrefix) {
+      // ----- CHECK FOR QUOTES COMMAND (any message containing 'bot') -----
+      if (lowercaseMessage.includes('bot') || 
+          lowercaseMessage.includes('বট') || 
+          words.some(word => PREFIXES.includes(word))) {
+        
+        console.log('💬 Quotes command detected!');
         await sendQuoteMessage(senderID, threadID, messageID, api);
-      } else {
-        // Handle commands - VIDEO DOWNLOAD REMOVED
-        switch (lowerBody) {
-          case "hello":
-            await api.sendMessage("hello i am aminul bot", threadID, messageID);
-            break;
-            
-          case "help":
-            await api.sendMessage(getHelpMessage(1), threadID, messageID);
-            break;
-            
-          case "uptime":
-            await api.sendMessage(`⏱ Bot Uptime: ${getUptime()}`, threadID, messageID);
-            break;
-            
-          case "uid":
-            await api.sendMessage(`👤 Your User ID: ${senderID}`, threadID, messageID);
-            break;
-            
-          case "ping":
-            await api.sendMessage("🏓 Pong! I'm online and working perfectly!", threadID, messageID);
-            break;
-            
-          case "info":
-            await sendInfoMessage(threadID, messageID, api);
-            break;
-            
-          case "pending":
-            if (!isAdmin(senderID)) {
-              return api.sendMessage(_getText("adminOnly"), threadID, messageID);
-            }
-            await handlePendingCommand(threadID, messageID, api);
-            break;
-            
-          case "restart bot":
-            if (!isAdmin(senderID)) {
-              return api.sendMessage(_getText("adminOnly"), threadID, messageID);
-            }
-            await api.sendMessage("🔄 Restarting bot...", threadID, messageID);
-            setTimeout(() => process.exit(1), 1000);
-            break;
-            
-          default:
-            if (lowerBody.startsWith("help ")) {
-              const pageMatch = lowerBody.match(/help\s+(\d+)/);
-              const page = pageMatch ? parseInt(pageMatch[1]) : 1;
-              await api.sendMessage(getHelpMessage(page), threadID, messageID);
-            } 
-            else if (lowerBody.startsWith("admin")) {
-              if (!isAdmin(senderID)) {
-                return api.sendMessage(_getText("adminOnly"), threadID, messageID);
-              }
-              const parts = lowerBody.split(" ");
-              const subCommand = parts[1];
-              const targetID = parts[2];
+        return;
+      }
 
-              if (subCommand === "list") {
-                await handleAdminList(threadID, messageID, api);
-              } else if (subCommand === "add" && targetID) {
-                await handleAdminAdd(targetID, threadID, messageID, api);
-              } else if (subCommand === "remove" && targetID) {
-                await handleAdminRemove(targetID, threadID, messageID, api);
-              } else {
-                await api.sendMessage("❌ Usage: admin list | admin add <userID> | admin remove <userID>", threadID, messageID);
-              }
-            }
-            // Removed URL detection and video download functionality
+      // ----- REGULAR COMMANDS -----
+      
+      // Help command
+      if (lowercaseMessage === 'help' || lowercaseMessage === 'help ') {
+        await api.sendMessage(getHelpMessage(1), threadID, messageID);
+      }
+      // Help with page number
+      else if (lowercaseMessage.startsWith('help ')) {
+        const pageMatch = lowercaseMessage.match(/help\s+(\d+)/);
+        const page = pageMatch ? parseInt(pageMatch[1]) : 1;
+        await api.sendMessage(getHelpMessage(page), threadID, messageID);
+      }
+      // Hello command
+      else if (lowercaseMessage === 'hello' || lowercaseMessage === 'হ্যালো' || lowercaseMessage === 'হাই') {
+        await api.sendMessage("Hello! I am Aminul Bot. How can I help you?", threadID, messageID);
+      }
+      // Uptime command
+      else if (lowercaseMessage === 'uptime' || lowercaseMessage === 'আপটাইম') {
+        await api.sendMessage(`⏱ Bot Uptime: ${getUptime()}`, threadID, messageID);
+      }
+      // UID command
+      else if (lowercaseMessage === 'uid' || lowercaseMessage === 'আইডি' || lowercaseMessage === 'ইউআইডি') {
+        await api.sendMessage(`👤 Your User ID: ${senderID}`, threadID, messageID);
+      }
+      // Ping command
+      else if (lowercaseMessage === 'ping' || lowercaseMessage === 'পিং') {
+        await api.sendMessage("🏓 Pong! Bot is online and working!", threadID, messageID);
+      }
+      // Info command
+      else if (lowercaseMessage === 'info' || lowercaseMessage === 'তথ্য' || lowercaseMessage === 'ইনফো') {
+        await sendInfoMessage(threadID, messageID, api);
+      }
+      // Pending command (admin only)
+      else if (lowercaseMessage === 'pending' || lowercaseMessage === 'পেন্ডিং') {
+        if (!isAdmin(senderID)) {
+          return api.sendMessage("❌ This command is for admins only!", threadID, messageID);
+        }
+        await handlePendingCommand(threadID, messageID, api);
+      }
+      // Restart command (admin only)
+      else if (lowercaseMessage === 'restart' || lowercaseMessage === 'রিস্টার্ট') {
+        if (!isAdmin(senderID)) {
+          return api.sendMessage("❌ This command is for admins only!", threadID, messageID);
+        }
+        await api.sendMessage("🔄 Restarting bot...", threadID, messageID);
+        setTimeout(() => process.exit(1), 1000);
+      }
+      // Admin commands
+      else if (lowercaseMessage.startsWith('admin')) {
+        if (!isAdmin(senderID)) {
+          return api.sendMessage("❌ This command is for admins only!", threadID, messageID);
+        }
+        
+        const parts = lowercaseMessage.split(' ');
+        
+        if (parts.length === 1 || parts[1] === 'list') {
+          await handleAdminList(threadID, messageID, api);
+        }
+        else if (parts[1] === 'add' && parts[2]) {
+          await handleAdminAdd(parts[2], threadID, messageID, api);
+        }
+        else if (parts[1] === 'remove' && parts[2]) {
+          await handleAdminRemove(parts[2], threadID, messageID, api);
+        }
+        else {
+          await api.sendMessage(
+            "❌ Admin Commands:\n" +
+            "• admin list - Show all admins\n" +
+            "• admin add <userID> - Add new admin\n" +
+            "• admin remove <userID> - Remove admin",
+            threadID, 
+            messageID
+          );
         }
       }
+      // Test command (for debugging)
+      else if (lowercaseMessage === 'test' || lowercaseMessage === 'টেস্ট') {
+        await api.sendMessage(
+          `✅ Bot is working!\n\n` +
+          `Your message: ${originalMessage}\n` +
+          `Thread ID: ${threadID}\n` +
+          `Sender ID: ${senderID}`,
+          threadID, 
+          messageID
+        );
+      }
+      
     } catch (error) {
       console.error("❌ Error handling message:", error);
       try {
@@ -447,7 +447,7 @@ if (cluster.isMaster) {
     
     try {
       if (logMessageType === "log:subscribe") {
-        api.sendMessage("👋 Welcome to the group! Use /help to see available commands.", threadID);
+        api.sendMessage("👋 Welcome to the group! Send 'help' to see available commands.", threadID);
       } else if (logMessageType === "log:unsubscribe") {
         api.sendMessage("👋 A member has left the group.", threadID);
       }
@@ -456,80 +456,81 @@ if (cluster.isMaster) {
     }
   }
 
-  // Setup MQTT listener with proper reconnection
+  // ============== FIXED MQTT LISTENER ==============
+  
   function setupMqttListener(api) {
+    console.log("🔄 Setting up MQTT listener...");
+    
     // Stop existing listener if any
     if (mqttListener) {
       try {
-        mqttListener.stop();
+        if (typeof mqttListener.stop === 'function') {
+          mqttListener.stop();
+        }
       } catch (e) {
         console.log("⚠️ Could not stop existing listener:", e.message);
       }
     }
 
-    console.log("🔄 Setting up MQTT listener...");
-    
-    mqttListener = api.listenMqtt((err, event) => {
-      if (err) {
-        console.error("❌ listenMqtt error:", err);
-        
-        // Exponential backoff for reconnection
-        const delay = Math.min(10000 * Math.pow(2, reconnectAttempts), 60000);
-        reconnectAttempts++;
-        
-        console.log(`⚠️ Reconnecting in ${delay/1000}s... (Attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`);
-        
-        setTimeout(() => {
-          if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
-            setupMqttListener(api);
-          } else {
-            console.error("❌ Max reconnection attempts reached. Restarting worker...");
-            process.exit(1);
+    // Set up new listener
+    try {
+      mqttListener = api.listenMqtt((err, event) => {
+        if (err) {
+          console.error("❌ MQTT Error:", err);
+          
+          // Reconnection logic
+          reconnectAttempts++;
+          const delay = Math.min(5000 * reconnectAttempts, 30000);
+          
+          console.log(`⚠️ Reconnecting in ${delay/1000} seconds... (Attempt ${reconnectAttempts})`);
+          
+          setTimeout(() => {
+            if (reconnectAttempts < 10) {
+              setupMqttListener(api);
+            } else {
+              console.error("❌ Max reconnection attempts reached. Restarting...");
+              process.exit(1);
+            }
+          }, delay);
+          return;
+        }
+
+        // Reset reconnect attempts on success
+        reconnectAttempts = 0;
+
+        // Process events
+        if (event) {
+          console.log(`📡 Event received: ${event.type || 'unknown'}`);
+          
+          if (event.type === "message" || event.type === "message_reply") {
+            // Handle message directly
+            handleMessage(event, api).catch(e => {
+              console.error("❌ Error in message handler:", e);
+            });
+          } 
+          else if (event.type === "event") {
+            handleEvent(event, api);
           }
-        }, delay);
-        return;
-      }
-
-      // Reset reconnect attempts on successful connection
-      reconnectAttempts = 0;
-
-      if (!event) return;
-
-      // Handle different event types
-      if (event.type === "message" || event.type === "message_reply") {
-        messageQueue.push({ event, api });
-        processMessageQueue();
-      } else if (event.type === "event") {
-        handleEvent(event, api);
-      }
-    });
-
-    // Add error handler for the listener itself
-    if (mqttListener && mqttListener.on) {
-      mqttListener.on('error', (error) => {
-        console.error("❌ MQTT Listener error:", error);
+        }
       });
+
+      console.log("✅ MQTT listener is active and listening for messages!");
+      
+      // Add error handler for the listener
+      if (mqttListener && mqttListener.on) {
+        mqttListener.on('error', (error) => {
+          console.error("❌ MQTT Listener error:", error);
+        });
+      }
+
+    } catch (error) {
+      console.error("❌ Failed to setup MQTT listener:", error);
+      setTimeout(() => setupMqttListener(api), 5000);
     }
   }
 
-  // Keep-alive mechanism
-  function startKeepAlive(api) {
-    setInterval(() => {
-      if (api && api.getCurrentUserID) {
-        api.getCurrentUserID((err, userID) => {
-          if (err) {
-            console.error("❌ Keep-alive failed:", err);
-          } else {
-            console.log("💓 Keep-alive ping successful");
-          }
-        });
-      }
-    }, 300000); // Every 5 minutes
-  }
-
-  // ---------- END OF FIXES ----------
-
-  // Bot login
+  // ============== BOT LOGIN ==============
+  
   login(
     { appState: appState },
     (err, api) => {
@@ -538,12 +539,33 @@ if (cluster.isMaster) {
         process.exit(1);
       }
 
-      console.log("✅ Bot Login Success!");
+      console.log("✅ Bot Login Successful!");
+      api.getCurrentUserID((err, userID) => {
+        if (!err) {
+          console.log(`🤖 Bot User ID: ${userID}`);
+        }
+      });
       console.log(`🤖 Bot is now listening for messages...`);
 
-      // Health report task (Every 1 hour)
+      // Start MQTT listener after a short delay
+      setTimeout(() => {
+        setupMqttListener(api);
+      }, 2000);
+
+      // Keep-alive mechanism (every 2 minutes)
       setInterval(() => {
-        const report = `⏱️ **𝗛𝗘𝗔𝗟𝗧𝗛 𝗥𝗘𝗣𝗢𝗥𝗧** ⏱️\n\n` +
+        api.getUserInfo(api.getCurrentUserID(), (err, userInfo) => {
+          if (err) {
+            console.error("❌ Keep-alive failed:", err);
+          } else {
+            console.log("💓 Keep-alive: Bot is online");
+          }
+        });
+      }, 120000);
+
+      // Health report to admins (every hour)
+      setInterval(() => {
+        const report = `⏱️ **HEALTH REPORT** ⏱️\n\n` +
           `✅ **Status:** Online & Healthy\n` +
           `⏱️ **Uptime:** ${getUptime()}\n` +
           `🆔 **PID:** ${process.pid}\n` +
@@ -551,21 +573,15 @@ if (cluster.isMaster) {
           `🤖 *Automated System Report*`;
         
         adminList.forEach(adminID => {
-          api.sendMessage(report, adminID);
+          api.sendMessage(report, adminID).catch(console.error);
         });
         console.log("📢 Health report sent to admins");
-      }, 3600000); // 1 hour in milliseconds
+      }, 3600000);
 
-      // Start MQTT listener with fixes
-      setupMqttListener(api);
-      
-      // Start keep-alive
-      startKeepAlive(api);
-
-      // Graceful shutdown handling
+      // Graceful shutdown
       process.on('SIGTERM', () => {
         console.log('📴 Worker shutting down gracefully...');
-        if (mqttListener && mqttListener.stop) {
+        if (mqttListener && typeof mqttListener.stop === 'function') {
           mqttListener.stop();
         }
         setTimeout(() => process.exit(0), 1000);
@@ -573,28 +589,32 @@ if (cluster.isMaster) {
     }
   );
 
-  // Uptime helper
+  // ============== HELPER FUNCTIONS ==============
+
+  // Get uptime string
   function getUptime() {
     const uptimeMs = Date.now() - BOT_START_TIME;
     const seconds = Math.floor((uptimeMs / 1000) % 60);
     const minutes = Math.floor((uptimeMs / (1000 * 60)) % 60);
     const hours = Math.floor((uptimeMs / (1000 * 60 * 60)) % 24);
     const days = Math.floor(uptimeMs / (1000 * 60 * 60 * 24));
+    
     if (days > 0) return `${days}d ${hours}h ${minutes}m ${seconds}s`;
     if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
     if (minutes > 0) return `${minutes}m ${seconds}s`;
     return `${seconds}s`;
   }
 
+  // Get help message with pagination
   function getHelpMessage(page = 1) {
     const numberOfOnePage = 5;
     let arrayInfo = [];
 
-    let msg = `😊!!-> 𝗔𝗦𝗦𝗔𝗟𝗔-𝗠𝗨𝗔𝗟𝗔𝗜𝗞𝗨𝗠 <-!!🥰\n⚘⊶───────────────────⚭\n˚ · .˚ · . ❀ 𝗖𝗢𝗠𝗠𝗔𝗡𝗗 𝗟𝗜𝗦𝗧 ❀ ˚ · .˚ · .\n\n┌────────────────────❍\n`;
+    let msg = `😊!!-> ASSALAMUALAIKUM <-!!🥰\n⚘⊶───────────────────⚭\n˚ · .˚ · . ❀ COMMAND LIST ❀ ˚ · .˚ · .\n\n┌────────────────────❍\n`;
 
     // Build array of commands with descriptions
     for (const [name, value] of Object.entries(COMMANDS)) {
-      const cmdName = `${name}  𓆩😇𓆪  ${value}`;
+      const cmdName = `${name} 𓆩😇𓆪 ${value}`;
       arrayInfo.push(cmdName);
     }
 
@@ -613,41 +633,32 @@ if (cluster.isMaster) {
 
     // Add footer
     const totalPages = Math.ceil(arrayInfo.length / numberOfOnePage);
-    msg += `└────────────────────❍\n⚘⊶───────────────────⚭
-😫!!-> 𝐀𝐌𝐈𝐍𝐔𝐋 𝐒𝐎𝐑𝐃𝐀𝐑 <-!!🥵
-😀!!-> 𝗕𝗢𝗧𓆩😇𓆪𝗔𝗠𝗜𝗡𝗨𝗟 𝟭𝟰𝟯 <-!!😘
-                                ┌──❀*̥˚───❀*̥˚─┐
-                                                         𝗣𝗔𝗚𝗘 ${page}/${totalPages}
-                                └───❀*̥˚───❀*̥˚┘
-
-𝗧𝗢𝗧𝗔𝗟 𝗖𝗢𝗠𝗠𝗔𝗡𝗗 𝗢𝗡 𝗕𝗢𝗧 - ${arrayInfo.length}
-
-𝗔𝗡𝗬 𝗛𝗘𝗟𝗣 𝗖𝗢𝗡𝗧𝗔𝗖𝗧 𝗠𝗬 𝗔𝗗𝗠𝗜𝗡
-𝗙𝗔𝗖𝗘𝗕𝗢𝗢𝗞 𝗜𝗗 : 𝐀𝐌𝐈𝐍𝐔𝐋 𝐒𝐎𝐑𝐃𝐀𝐑 😗`;
+    msg += `└────────────────────❍\n⚘⊶───────────────────⚭\n😫!!-> AMINUL SORDAR <-!!🥵\n😀!!-> BOT𓆩😇𓆪AMINUL 143 <-!!😘\n                                ┌──❀*̥˚───❀*̥˚─┐\n                                                         PAGE ${page}/${totalPages}\n                                └───❀*̥˚───❀*̥˚┘\n\nTOTAL COMMANDS - ${arrayInfo.length}\n\nANY HELP CONTACT MY ADMIN\nFACEBOOK ID : AMINUL SORDAR 😗`;
 
     return msg;
   }
 
+  // Send info message with admin photo
   function sendInfoMessage(threadID, messageID, api) {
     const avatarURL = "https://graph.facebook.com/100071880593545/picture?height=720&width=720&access_token=6628568379%7Cc1e620fa708a1d5696fb991c1bde5662";
     const imgPath = path.join(CACHE_DIR, "aminul-avatar.png");
 
     const callback = () => {
       api.sendMessage({
-        body: `╭─〔🌸 𝐀𝐌𝐈𝐍𝐔𝐋𝐁𝐎𝐓 𝐈𝐍𝐅𝐎 🌸〕─╮
-│ 💫 **𝐍𝐚𝐦𝐞:** 𝐀𝐦𝐢𝐧𝐮𝐥 𝐒𝐚𝐫𝐝𝐚𝐫
-│ 🕌 **𝐑𝐞𝐥𝐢𝐠𝐢𝐨𝐧:** 𝐈𝐬𝐥𝐚𝐦
-│ 📍 **𝐅𝐫𝐨𝐦:** 𝐑𝐚𝐣𝐬𝐡𝐚𝐡𝐢, 𝐃𝐡𝐚𝐤𝐚
-│ 👦 **𝐆𝐞𝐧𝐝𝐞𝐫:** 𝐌𝐚𝐥𝐞
-│ 🎂 **𝐀𝐠𝐞:** 𝟏𝟖+
-│ 💞 **𝐑𝐞𝐥𝐚𝐭𝐢𝐨𝐧𝐬𝐡𝐢𝐩:** 𝐒𝐢𝐧𝐠𝐥𝐞
-│ 🎓 **𝐖𝐨𝐫𝐤:** 𝐒𝐭𝐮𝐝𝐞𝐧𝐭
-│ ✉ **𝐆𝐦𝐚𝐢𝐥:** aminulsordar04@gmail.com
-│ 💬 **𝐖𝐡𝐚𝐭𝐬𝐀𝐩𝐩:** wa.me/+8801704407109
-│ 💭 **𝐓𝐞𝐥𝐞𝐠𝐫𝐚𝐦:** t.me/Aminulsordar
-│ 🌐 **𝐅𝐚𝐜𝐞𝐛𝐨𝐨𝐤:** facebook.com/100071880593545
+        body: `╭─〔🌸 AMINUL BOT INFO 🌸〕─╮
+│ 💫 **Name:** Aminul Sardar
+│ 🕌 **Religion:** Islam
+│ 📍 **From:** Rajshahi, Dhaka
+│ 👦 **Gender:** Male
+│ 🎂 **Age:** 18+
+│ 💞 **Relationship:** Single
+│ 🎓 **Work:** Student
+│ ✉ **Gmail:** aminulsordar04@gmail.com
+│ 💬 **WhatsApp:** wa.me/+8801704407109
+│ 💭 **Telegram:** t.me/Aminulsordar
+│ 🌐 **Facebook:** facebook.com/100071880593545
 │
-╰───〔💛 𝐀𝐌𝐈𝐍𝐔𝐋 𝐗 𝐁𝐎𝐓 💛〕───╯`,
+╰───〔💛 AMINUL X BOT 💛〕───╯`,
         attachment: fs.createReadStream(imgPath)
       }, threadID, () => fs.unlinkSync(imgPath));
     };
@@ -698,7 +709,7 @@ if (cluster.isMaster) {
   // Handle admin list command
   function handleAdminList(threadID, messageID, api) {
     try {
-      let msg = "👮 𝗔𝗖𝗧𝗜𝗩𝗘 𝗔𝗗𝗠𝗜𝗡𝗦:\n\n";
+      let msg = "👮 ACTIVE ADMINS:\n\n";
       adminList.forEach((id, index) => {
         msg += `${index + 1}. ${id}\n`;
       });
@@ -769,7 +780,7 @@ if (cluster.isMaster) {
           // Send message with mention
           api.sendMessage({
             body: `🥀 ${userName} 🥀\n\n${randomQuote}`,
-            mentions: [{ id: senderID, tag: userName }]
+            mentions: [{ tag: userName, id: senderID }]
           }, threadID, messageID, (err) => {
             if (err) reject(err);
             else resolve();
@@ -782,6 +793,4 @@ if (cluster.isMaster) {
       }
     });
   }
-
-  // Video download function completely removed
 }
