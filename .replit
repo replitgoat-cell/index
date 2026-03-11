@@ -24,3 +24,16 @@ args = "node index.js"
 
 [workflows.workflow.metadata]
 outputType = "console"
+
+[deployment]
+deploymentTarget = "vm"
+run = ["node", "index.js"]
+
+[userenv]
+
+[userenv.shared]
+PORT = "3000"
+
+[[ports]]
+localPort = 3000
+externalPort = 80

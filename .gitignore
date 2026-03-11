@@ -1,0 +1,11 @@
+node_modules/
+.cache/
+cache/
+appstate.json
+fb_dtsg_data.json
+.env
+.env.local
+.replit
+.DS_Store
+*.log
+.agents/

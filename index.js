@@ -599,28 +599,26 @@ if (cluster.isMaster) {
       console.log(`🌤️ [WEATHER] Fetching data for: ${city}`);
       api.sendMessage("🌤️ Fetching weather data...", threadID);
       
-      const response = await axios.get(
-        `https://api.open-meteo.com/v1/forecast?latitude=0&longitude=0&current=temperature_2m,weather_code,wind_speed_10m&timezone=auto`,
-        { params: { q: city } }
-      );
-
-      const weatherApi = await axios.get(
+      // Get city coordinates first
+      const geoRes = await axios.get(
         `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=en&format=json`
       );
 
-      if (!weatherApi.data.results || weatherApi.data.results.length === 0) {
+      if (!geoRes.data.results || geoRes.data.results.length === 0) {
+        console.log(`❌ [WEATHER] City not found: ${city}`);
         return api.sendMessage(`❌ City "${city}" not found`, threadID, messageID);
       }
 
-      const place = weatherApi.data.results[0];
+      const place = geoRes.data.results[0];
       const lat = place.latitude;
       const lon = place.longitude;
 
-      const weather = await axios.get(
+      // Get weather data
+      const weatherRes = await axios.get(
         `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m&timezone=auto`
       );
 
-      const current = weather.data.current;
+      const current = weatherRes.data.current;
       const msg = `
 🌤️ 𝗪𝗘𝗔𝗧𝗛𝗘𝗥 𝗜𝗡𝗙𝗢 🌤️
 
@@ -634,7 +632,7 @@ if (cluster.isMaster) {
       console.log(`🌤️ [WEATHER] Successfully fetched weather for: ${city}`);
       api.sendMessage(msg, threadID, messageID);
     } catch (error) {
-      console.error("❌ [WEATHER ERROR]:", error);
+      console.error("❌ [WEATHER ERROR]:", error.message);
       api.sendMessage("❌ Failed to fetch weather data", threadID, messageID);
     }
   }
