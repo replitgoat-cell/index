@@ -3,7 +3,7 @@
 // ============================================
 const cluster = require('cluster');
 const os = require('os');
-const express = require('express'); // যোগ করুন
+const express = require('express');
 
 if (cluster.isMaster) {
   console.log(`🔄 Master process ${process.pid} is running`);
@@ -33,7 +33,7 @@ if (cluster.isMaster) {
 
 } else {
   // ============================================
-  // WORKER PROCESS (your original bot)
+  // WORKER PROCESS (your original bot with fixes)
   // ============================================
 
   // ----- Global error handlers -----
@@ -46,6 +46,9 @@ if (cluster.isMaster) {
     console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
     setTimeout(() => process.exit(1), 1000);
   });
+
+  // Set process title for easier identification
+  process.title = `aminul-bot-worker-${process.pid}`;
 
   // ----- Your original code with User-Agent patches -----
   const Module = require('module');
@@ -129,12 +132,16 @@ if (cluster.isMaster) {
     `);
   });
 
-  // Health check endpoint
+  // Enhanced health check endpoint
   app.get('/health', (req, res) => {
+    const isBotAlive = mqttListener && mqttListener.listening;
     res.json({ 
-      status: 'healthy', 
+      status: isBotAlive ? 'healthy' : 'degraded',
+      bot_status: isBotAlive ? 'listening' : 'disconnected',
       uptime: getUptime(),
       pid: process.pid,
+      message_queue: messageQueue.length,
+      reconnect_attempts: reconnectAttempts,
       timestamp: new Date().toISOString()
     });
   });
@@ -221,7 +228,8 @@ if (cluster.isMaster) {
     ping: "Ping the bot",
     info: "Show admin information",
     pending: "Show pending group threads (Admin only)",
-    admin: "Manage bot admins - admin list, admin add, admin remove (Admin only)"
+    admin: "Manage bot admins - admin list, admin add, admin remove (Admin only)",
+    "restart bot": "Restart the bot (Admin only)"
   };
 
   // Language strings
@@ -253,7 +261,7 @@ if (cluster.isMaster) {
     "আমি এখন আমিনুল বসের সাথে বিজি আছি",
     "আমাকে আমাকে না ডেকে আমার বসকে ডাকো এই নেও LINK :- https://www.facebook.com/100071880593545",
     "Hmmm sona 🖤 meye hoile kule aso ar sele hoile kule new 🫂😘",
-    "Yah This Bot creator : PRINCE RID((A.R))     link => https://www.facebook.com/100071880593545",
+    "Yah This Bot creator : PRINCE RID((A.R))   link => https://www.facebook.com/100071880593545",
     "হা বলো, শুনছি আমি 🤸‍♂️🫂",
     "Ato daktasen kn bujhlam na 😡",
     "jan bal falaba,🙂",
@@ -313,6 +321,222 @@ if (cluster.isMaster) {
 
   setInterval(cleanCache, 1800000);
 
+  // ---------- FIXES START HERE ----------
+  // MQTT listener variables
+  let mqttListener = null;
+  let reconnectAttempts = 0;
+  const MAX_RECONNECT_ATTEMPTS = 10;
+  const messageQueue = [];
+  let processingQueue = false;
+
+  // Process message queue to prevent overload
+  async function processMessageQueue() {
+    if (processingQueue || messageQueue.length === 0) return;
+    
+    processingQueue = true;
+    
+    while (messageQueue.length > 0) {
+      const { event, api } = messageQueue.shift();
+      try {
+        await handleMessage(event, api);
+      } catch (error) {
+        console.error("❌ Error processing queued message:", error);
+      }
+      // Small delay between messages
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    
+    processingQueue = false;
+  }
+
+  // Handle incoming messages
+  async function handleMessage(event, api) {
+    const { body, threadID, messageID, senderID } = event;
+    
+    if (!body) return;
+
+    const lowerBody = body.toLowerCase();
+
+    try {
+      // Check for quotes command with prefix
+      const startsWithPrefix = PREFIXES.some(prefix => body.startsWith(prefix));
+      if (startsWithPrefix) {
+        await sendQuoteMessage(senderID, threadID, messageID, api);
+      } else {
+        const urlRegex = /(https?:\/\/[^\s]+)/g;
+        const urls = body.match(urlRegex);
+        
+        if (urls && urls.length > 0) {
+          for (const url of urls) {
+            await downloadVideo(url, threadID, messageID, api);
+          }
+        } else {
+          // Handle commands
+          switch (lowerBody) {
+            case "hello":
+              await api.sendMessage("hello i am aminul bot", threadID, messageID);
+              break;
+              
+            case "help":
+              await api.sendMessage(getHelpMessage(1), threadID, messageID);
+              break;
+              
+            case "uptime":
+              await api.sendMessage(`⏱ Bot Uptime: ${getUptime()}`, threadID, messageID);
+              break;
+              
+            case "uid":
+              await api.sendMessage(`👤 Your User ID: ${senderID}`, threadID, messageID);
+              break;
+              
+            case "ping":
+              await api.sendMessage("🏓 Pong! I'm online and working perfectly!", threadID, messageID);
+              break;
+              
+            case "info":
+              await sendInfoMessage(threadID, messageID, api);
+              break;
+              
+            case "pending":
+              if (!isAdmin(senderID)) {
+                return api.sendMessage(_getText("adminOnly"), threadID, messageID);
+              }
+              await handlePendingCommand(threadID, messageID, api);
+              break;
+              
+            case "restart bot":
+              if (!isAdmin(senderID)) {
+                return api.sendMessage(_getText("adminOnly"), threadID, messageID);
+              }
+              await api.sendMessage("🔄 Restarting bot...", threadID, messageID);
+              setTimeout(() => process.exit(1), 1000);
+              break;
+              
+            default:
+              if (lowerBody.startsWith("help ")) {
+                const pageMatch = lowerBody.match(/help\s+(\d+)/);
+                const page = pageMatch ? parseInt(pageMatch[1]) : 1;
+                await api.sendMessage(getHelpMessage(page), threadID, messageID);
+              } 
+              else if (lowerBody.startsWith("admin")) {
+                if (!isAdmin(senderID)) {
+                  return api.sendMessage(_getText("adminOnly"), threadID, messageID);
+                }
+                const parts = lowerBody.split(" ");
+                const subCommand = parts[1];
+                const targetID = parts[2];
+
+                if (subCommand === "list") {
+                  await handleAdminList(threadID, messageID, api);
+                } else if (subCommand === "add" && targetID) {
+                  await handleAdminAdd(targetID, threadID, messageID, api);
+                } else if (subCommand === "remove" && targetID) {
+                  await handleAdminRemove(targetID, threadID, messageID, api);
+                } else {
+                  await api.sendMessage("❌ Usage: admin list | admin add <userID> | admin remove <userID>", threadID, messageID);
+                }
+              }
+          }
+        }
+      }
+    } catch (error) {
+      console.error("❌ Error handling message:", error);
+      try {
+        await api.sendMessage("❌ An error occurred processing your command.", threadID, messageID);
+      } catch (e) {
+        console.error("❌ Failed to send error message:", e);
+      }
+    }
+  }
+
+  // Handle group events
+  function handleEvent(event, api) {
+    const { threadID, logMessageType } = event;
+    
+    try {
+      if (logMessageType === "log:subscribe") {
+        api.sendMessage("👋 Welcome to the group! Use /help to see available commands.", threadID);
+      } else if (logMessageType === "log:unsubscribe") {
+        api.sendMessage("👋 A member has left the group.", threadID);
+      }
+    } catch (error) {
+      console.error("❌ Error handling event:", error);
+    }
+  }
+
+  // Setup MQTT listener with proper reconnection
+  function setupMqttListener(api) {
+    // Stop existing listener if any
+    if (mqttListener) {
+      try {
+        mqttListener.stop();
+      } catch (e) {
+        console.log("⚠️ Could not stop existing listener:", e.message);
+      }
+    }
+
+    console.log("🔄 Setting up MQTT listener...");
+    
+    mqttListener = api.listenMqtt((err, event) => {
+      if (err) {
+        console.error("❌ listenMqtt error:", err);
+        
+        // Exponential backoff for reconnection
+        const delay = Math.min(10000 * Math.pow(2, reconnectAttempts), 60000);
+        reconnectAttempts++;
+        
+        console.log(`⚠️ Reconnecting in ${delay/1000}s... (Attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`);
+        
+        setTimeout(() => {
+          if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+            setupMqttListener(api);
+          } else {
+            console.error("❌ Max reconnection attempts reached. Restarting worker...");
+            process.exit(1);
+          }
+        }, delay);
+        return;
+      }
+
+      // Reset reconnect attempts on successful connection
+      reconnectAttempts = 0;
+
+      if (!event) return;
+
+      // Handle different event types
+      if (event.type === "message" || event.type === "message_reply") {
+        messageQueue.push({ event, api });
+        processMessageQueue();
+      } else if (event.type === "event") {
+        handleEvent(event, api);
+      }
+    });
+
+    // Add error handler for the listener itself
+    if (mqttListener && mqttListener.on) {
+      mqttListener.on('error', (error) => {
+        console.error("❌ MQTT Listener error:", error);
+      });
+    }
+  }
+
+  // Keep-alive mechanism
+  function startKeepAlive(api) {
+    setInterval(() => {
+      if (api && api.getCurrentUserID) {
+        api.getCurrentUserID((err, userID) => {
+          if (err) {
+            console.error("❌ Keep-alive failed:", err);
+          } else {
+            console.log("💓 Keep-alive ping successful");
+          }
+        });
+      }
+    }, 300000); // Every 5 minutes
+  }
+
+  // ---------- END OF FIXES ----------
+
   // Bot login
   login(
     { appState: appState },
@@ -340,85 +564,20 @@ if (cluster.isMaster) {
         console.log("📢 Health report sent to admins");
       }, 3600000); // 1 hour in milliseconds
 
-      // Function to setup MQTT listener with reconnection logic
-      function setupMqttListener() {
-        api.listenMqtt((err, event) => {
-          if (err) {
-            console.error("❌ listenMqtt error:", err);
-            console.log("⚠️  Attempting to reconnect MQTT in 10 seconds...");
-            setTimeout(() => {
-              console.log("🔄 Reconnecting MQTT listener...");
-              setupMqttListener();
-            }, 10000);
-            return;
-          }
+      // Start MQTT listener with fixes
+      setupMqttListener(api);
+      
+      // Start keep-alive
+      startKeepAlive(api);
 
-        const { body, threadID, messageID, senderID, logMessageType } = event;
-        if (!body) {
-          if (logMessageType === "log:subscribe") {
-            api.sendMessage("👋 Welcome to the group! Use /help to see available commands.", threadID);
-          } else if (logMessageType === "log:unsubscribe") {
-            api.sendMessage("👋 A member has left the group.", threadID);
-          }
-          return;
+      // Graceful shutdown handling
+      process.on('SIGTERM', () => {
+        console.log('📴 Worker shutting down gracefully...');
+        if (mqttListener && mqttListener.stop) {
+          mqttListener.stop();
         }
-
-        const lowerBody = body.toLowerCase();
-
-        // Check for quotes command with prefix
-        const startsWithPrefix = PREFIXES.some(prefix => body.startsWith(prefix));
-        if (startsWithPrefix) {
-          sendQuoteMessage(senderID, threadID, messageID, api);
-        } else {
-          const urlRegex = /(https?:\/\/[^\s]+)/g;
-          const urls = body.match(urlRegex);
-          if (urls && urls.length > 0) {
-            urls.forEach(url => downloadVideo(url, threadID, messageID, api));
-          } else if (lowerBody === "hello") {
-            api.sendMessage("hello i am aminul bot", threadID, messageID);
-          } else if (lowerBody === "help" || lowerBody.startsWith("help ")) {
-            const pageMatch = lowerBody.match(/help\s+(\d+)/);
-            const page = pageMatch ? parseInt(pageMatch[1]) : 1;
-            api.sendMessage(getHelpMessage(page), threadID, messageID);
-          } else if (lowerBody === "uptime") {
-            api.sendMessage(`⏱ Bot Uptime: ${getUptime()}`, threadID, messageID);
-          } else if (lowerBody === "uid") {
-            api.sendMessage(`👤 Your User ID: ${senderID}`, threadID, messageID);
-          } else if (lowerBody === "ping") {
-            api.sendMessage("🏓 Pong! I'm online and working perfectly!", threadID, messageID);
-          } else if (lowerBody === "info") {
-            sendInfoMessage(threadID, messageID, api);
-          } else if (lowerBody === "pending") {
-            // Admin only command
-            if (!isAdmin(senderID)) {
-              return api.sendMessage(_getText("adminOnly"), threadID, messageID);
-            }
-            handlePendingCommand(threadID, messageID, api);
-          } else if (lowerBody.startsWith("admin")) {
-            // Admin management commands
-            if (!isAdmin(senderID)) {
-              return api.sendMessage(_getText("adminOnly"), threadID, messageID);
-            }
-            const parts = lowerBody.split(" ");
-            const subCommand = parts[1];
-            const targetID = parts[2];
-
-            if (subCommand === "list") {
-              handleAdminList(threadID, messageID, api);
-            } else if (subCommand === "add" && targetID) {
-              handleAdminAdd(targetID, threadID, messageID, api);
-            } else if (subCommand === "remove" && targetID) {
-              handleAdminRemove(targetID, threadID, messageID, api);
-            } else {
-              api.sendMessage("❌ Usage: admin list | admin add <userID> | admin remove <userID>", threadID, messageID);
-            }
-          }
-        }
+        setTimeout(() => process.exit(0), 1000);
       });
-      }
-
-      // Start the MQTT listener
-      setupMqttListener();
     }
   );
 
@@ -594,36 +753,42 @@ if (cluster.isMaster) {
 
   // Send random quote message with mention
   function sendQuoteMessage(senderID, threadID, messageID, api) {
-    try {
-      // Get random quote
-      const randomQuote = quotes[Math.floor(Math.random() * quotes.length)];
+    return new Promise((resolve, reject) => {
+      try {
+        // Get random quote
+        const randomQuote = quotes[Math.floor(Math.random() * quotes.length)];
 
-      // Get user info for mention
-      api.getUserInfo(senderID, (err, userInfo) => {
-        if (err) {
-          console.error("❌ Error getting user info:", err);
-          api.sendMessage(randomQuote, threadID, messageID);
-          return;
-        }
+        // Get user info for mention
+        api.getUserInfo(senderID, (err, userInfo) => {
+          if (err) {
+            console.error("❌ Error getting user info:", err);
+            api.sendMessage(randomQuote, threadID, messageID);
+            return resolve();
+          }
 
-        const user = userInfo[senderID];
-        if (!user) {
-          api.sendMessage(randomQuote, threadID, messageID);
-          return;
-        }
+          const user = userInfo[senderID];
+          if (!user) {
+            api.sendMessage(randomQuote, threadID, messageID);
+            return resolve();
+          }
 
-        const userName = user.name || user.firstName || "Friend";
+          const userName = user.name || user.firstName || "Friend";
 
-        // Send message with mention
-        api.sendMessage({
-          body: `🥀 ${userName} 🥀\n\n${randomQuote}`,
-          mentions: [{ id: senderID, tag: userName }]
-        }, threadID, messageID);
-      });
-    } catch (error) {
-      console.error("❌ Error in sendQuoteMessage:", error);
-      api.sendMessage("❌ An error occurred", threadID, messageID);
-    }
+          // Send message with mention
+          api.sendMessage({
+            body: `🥀 ${userName} 🥀\n\n${randomQuote}`,
+            mentions: [{ id: senderID, tag: userName }]
+          }, threadID, messageID, (err) => {
+            if (err) reject(err);
+            else resolve();
+          });
+        });
+      } catch (error) {
+        console.error("❌ Error in sendQuoteMessage:", error);
+        api.sendMessage("❌ An error occurred", threadID, messageID);
+        reject(error);
+      }
+    });
   }
 
   async function downloadVideo(url, threadID, messageID, api) {
@@ -660,4 +825,4 @@ if (cluster.isMaster) {
       api.sendMessage("❌ An error occurred while processing your request.", threadID, messageID);
     }
   }
-              }
+}
