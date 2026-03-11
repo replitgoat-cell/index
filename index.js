@@ -363,80 +363,72 @@ if (cluster.isMaster) {
       if (startsWithPrefix) {
         await sendQuoteMessage(senderID, threadID, messageID, api);
       } else {
-        const urlRegex = /(https?:\/\/[^\s]+)/g;
-        const urls = body.match(urlRegex);
-        
-        if (urls && urls.length > 0) {
-          for (const url of urls) {
-            await downloadVideo(url, threadID, messageID, api);
-          }
-        } else {
-          // Handle commands
-          switch (lowerBody) {
-            case "hello":
-              await api.sendMessage("hello i am aminul bot", threadID, messageID);
-              break;
-              
-            case "help":
-              await api.sendMessage(getHelpMessage(1), threadID, messageID);
-              break;
-              
-            case "uptime":
-              await api.sendMessage(`⏱ Bot Uptime: ${getUptime()}`, threadID, messageID);
-              break;
-              
-            case "uid":
-              await api.sendMessage(`👤 Your User ID: ${senderID}`, threadID, messageID);
-              break;
-              
-            case "ping":
-              await api.sendMessage("🏓 Pong! I'm online and working perfectly!", threadID, messageID);
-              break;
-              
-            case "info":
-              await sendInfoMessage(threadID, messageID, api);
-              break;
-              
-            case "pending":
+        // Handle commands - VIDEO DOWNLOAD REMOVED
+        switch (lowerBody) {
+          case "hello":
+            await api.sendMessage("hello i am aminul bot", threadID, messageID);
+            break;
+            
+          case "help":
+            await api.sendMessage(getHelpMessage(1), threadID, messageID);
+            break;
+            
+          case "uptime":
+            await api.sendMessage(`⏱ Bot Uptime: ${getUptime()}`, threadID, messageID);
+            break;
+            
+          case "uid":
+            await api.sendMessage(`👤 Your User ID: ${senderID}`, threadID, messageID);
+            break;
+            
+          case "ping":
+            await api.sendMessage("🏓 Pong! I'm online and working perfectly!", threadID, messageID);
+            break;
+            
+          case "info":
+            await sendInfoMessage(threadID, messageID, api);
+            break;
+            
+          case "pending":
+            if (!isAdmin(senderID)) {
+              return api.sendMessage(_getText("adminOnly"), threadID, messageID);
+            }
+            await handlePendingCommand(threadID, messageID, api);
+            break;
+            
+          case "restart bot":
+            if (!isAdmin(senderID)) {
+              return api.sendMessage(_getText("adminOnly"), threadID, messageID);
+            }
+            await api.sendMessage("🔄 Restarting bot...", threadID, messageID);
+            setTimeout(() => process.exit(1), 1000);
+            break;
+            
+          default:
+            if (lowerBody.startsWith("help ")) {
+              const pageMatch = lowerBody.match(/help\s+(\d+)/);
+              const page = pageMatch ? parseInt(pageMatch[1]) : 1;
+              await api.sendMessage(getHelpMessage(page), threadID, messageID);
+            } 
+            else if (lowerBody.startsWith("admin")) {
               if (!isAdmin(senderID)) {
                 return api.sendMessage(_getText("adminOnly"), threadID, messageID);
               }
-              await handlePendingCommand(threadID, messageID, api);
-              break;
-              
-            case "restart bot":
-              if (!isAdmin(senderID)) {
-                return api.sendMessage(_getText("adminOnly"), threadID, messageID);
-              }
-              await api.sendMessage("🔄 Restarting bot...", threadID, messageID);
-              setTimeout(() => process.exit(1), 1000);
-              break;
-              
-            default:
-              if (lowerBody.startsWith("help ")) {
-                const pageMatch = lowerBody.match(/help\s+(\d+)/);
-                const page = pageMatch ? parseInt(pageMatch[1]) : 1;
-                await api.sendMessage(getHelpMessage(page), threadID, messageID);
-              } 
-              else if (lowerBody.startsWith("admin")) {
-                if (!isAdmin(senderID)) {
-                  return api.sendMessage(_getText("adminOnly"), threadID, messageID);
-                }
-                const parts = lowerBody.split(" ");
-                const subCommand = parts[1];
-                const targetID = parts[2];
+              const parts = lowerBody.split(" ");
+              const subCommand = parts[1];
+              const targetID = parts[2];
 
-                if (subCommand === "list") {
-                  await handleAdminList(threadID, messageID, api);
-                } else if (subCommand === "add" && targetID) {
-                  await handleAdminAdd(targetID, threadID, messageID, api);
-                } else if (subCommand === "remove" && targetID) {
-                  await handleAdminRemove(targetID, threadID, messageID, api);
-                } else {
-                  await api.sendMessage("❌ Usage: admin list | admin add <userID> | admin remove <userID>", threadID, messageID);
-                }
+              if (subCommand === "list") {
+                await handleAdminList(threadID, messageID, api);
+              } else if (subCommand === "add" && targetID) {
+                await handleAdminAdd(targetID, threadID, messageID, api);
+              } else if (subCommand === "remove" && targetID) {
+                await handleAdminRemove(targetID, threadID, messageID, api);
+              } else {
+                await api.sendMessage("❌ Usage: admin list | admin add <userID> | admin remove <userID>", threadID, messageID);
               }
-          }
+            }
+            // Removed URL detection and video download functionality
         }
       }
     } catch (error) {
@@ -791,38 +783,5 @@ if (cluster.isMaster) {
     });
   }
 
-  async function downloadVideo(url, threadID, messageID, api) {
-    try {
-      api.sendMessage("⏬ Downloading video...", threadID, messageID);
-
-      const apiURL = `https://aminul-rest-api-three.vercel.app/downloader/alldownloader?url=${encodeURIComponent(url)}`;
-      const res = await axios.get(apiURL);
-      const data = res?.data?.data?.data;
-
-      if (!data) return api.sendMessage("❌ Video data পাওয়া যায়নি।", threadID, messageID);
-
-      const { title, high, low } = data;
-      const videoURL = high || low;
-      if (!videoURL) return api.sendMessage("❌ Download link পাওয়া যায়নি।", threadID, messageID);
-
-      const filePath = path.join(CACHE_DIR, `autolink_${Date.now()}.mp4`);
-      request(videoURL)
-        .pipe(fs.createWriteStream(filePath))
-        .on("close", () => {
-          api.sendMessage(
-            { body: `🎬 𝗧𝗜𝗧𝗟𝗘:\n${title || "Unknown"}`, attachment: fs.createReadStream(filePath) },
-            threadID,
-            () => fs.unlink(filePath).catch(err => console.error("❌ Error deleting file:", err)),
-            messageID
-          );
-        })
-        .on("error", (error) => {
-          console.error("Download error:", error);
-          api.sendMessage("❌ Video download failed!", threadID, messageID);
-        });
-    } catch (error) {
-      console.error("Error in downloadVideo:", error);
-      api.sendMessage("❌ An error occurred while processing your request.", threadID, messageID);
-    }
-  }
+  // Video download function completely removed
 }
