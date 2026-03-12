@@ -28,12 +28,14 @@ if (cluster.isMaster) {
     worker = startWorker();
   });
 
-  // Graceful shutdown on master termination
-  process.on('SIGINT', () => {
+  // Graceful shutdown on master termination (SIGINT and SIGTERM)
+  const shutdown = () => {
     console.log('🛑 Master shutting down...');
-    worker.kill();
+    if (worker) worker.kill();
     process.exit(0);
-  });
+  };
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
 
 } else {
   // ============================================
@@ -138,10 +140,9 @@ if (cluster.isMaster) {
 
   // Enhanced health check endpoint
   app.get('/health', (req, res) => {
-    const isBotAlive = mqttListener && mqttListener.listening;
     res.json({ 
-      status: isBotAlive ? 'healthy' : 'degraded',
-      bot_status: isBotAlive ? 'listening' : 'disconnected',
+      status: isListenerActive ? 'healthy' : 'degraded',
+      bot_status: isListenerActive ? 'listening' : 'disconnected',
       uptime: getUptime(),
       pid: process.pid,
       message_queue: messageQueue.length,
@@ -236,7 +237,8 @@ if (cluster.isMaster) {
     "restart bot": "Restart the bot (Admin only)",
     listbox: "List all groups the bot is in",
     weather: "Get weather - weather <city>",
-    sendnoti: "Send notification to all groups (Admin only) - sendnoti <message>"
+    sendnoti: "Send notification to all groups (Admin only) - sendnoti <message>",
+    callad: "Contact the bot admin (sends a message to all admins)"
   };
 
   // Nekos image types for uptime command
@@ -285,7 +287,7 @@ if (cluster.isMaster) {
     "suna tomare amar valo lage,🙈😽"
   ];
 
-  // Prefix list for quotes command
+  // Prefix list for quotes command (must be followed by space or end of string)
   const PREFIXES = ['bot', 'Bot'];
 
   // Get appstate
@@ -337,6 +339,7 @@ if (cluster.isMaster) {
   // ---------- FIXES START HERE ----------
   // MQTT listener variables
   let mqttListener = null;
+  let isListenerActive = false; // custom flag for health check
   let reconnectAttempts = 0;
   const MAX_RECONNECT_ATTEMPTS = 10;
   const messageQueue = [];
@@ -344,7 +347,7 @@ if (cluster.isMaster) {
 
   // Process message queue to prevent overload
   async function processMessageQueue() {
-    if (processingQueue || messageQueue.length === 0) return;
+    if (processingQueue) return;
 
     processingQueue = true;
 
@@ -360,6 +363,14 @@ if (cluster.isMaster) {
     }
 
     processingQueue = false;
+
+    // If new messages arrived while processing, they would have been added to the queue
+    // but the while loop already finished. However, if messages were added after the last
+    // shift but before processingQueue was set to false, they won't be processed.
+    // To cover that, check again and restart if needed.
+    if (messageQueue.length > 0 && !processingQueue) {
+      setImmediate(processMessageQueue);
+    }
   }
 
   // Handle incoming messages
@@ -368,12 +379,16 @@ if (cluster.isMaster) {
 
     if (!body) return;
 
-    const lowerBody = body.toLowerCase();
+    const lowerBody = body.toLowerCase().trim();
     console.log(`📨 [MESSAGE] User: ${senderID} | Thread: ${threadID} | Command: ${body}`);
 
     try {
-      // Check for quotes command with prefix
-      const startsWithPrefix = PREFIXES.some(prefix => body.startsWith(prefix));
+      // Check for quotes command with prefix (exact prefix match: must be followed by space or end)
+      const startsWithPrefix = PREFIXES.some(prefix => {
+        const lowerPrefix = prefix.toLowerCase();
+        return lowerBody === lowerPrefix || lowerBody.startsWith(lowerPrefix + ' ');
+      });
+
       if (startsWithPrefix) {
         await sendQuoteMessage(senderID, threadID, messageID, api);
       } else {
@@ -431,6 +446,11 @@ if (cluster.isMaster) {
           case "listbox":
             console.log(`✅ [LISTBOX CMD] User: ${senderID}`);
             await handleListboxCommand(threadID, messageID, api);
+            break;
+
+          case "callad":
+            console.log(`✅ [CALLAD CMD] User: ${senderID}`);
+            await handleCallAdCommand(event, api);
             break;
 
           default:
@@ -685,6 +705,36 @@ if (cluster.isMaster) {
     }
   }
 
+  // Handle callad command
+  async function handleCallAdCommand(event, api) {
+    const { senderID, threadID, messageID, body } = event;
+    // Extract message after "callad"
+    const message = body.substring(6).trim() || "No message provided";
+
+    if (adminList.length === 0) {
+      return api.sendMessage("❌ No admins configured.", threadID, messageID);
+    }
+
+    let successCount = 0;
+    for (const adminID of adminList) {
+      try {
+        await api.sendMessage(
+          `📞 **CALLAD** from user ${senderID} in thread ${threadID}:\n\n${message}`,
+          adminID
+        );
+        successCount++;
+      } catch (err) {
+        console.error(`❌ Failed to send callad to admin ${adminID}:`, err);
+      }
+    }
+
+    if (successCount > 0) {
+      api.sendMessage(`✅ Your message has been sent to ${successCount} admin(s).`, threadID, messageID);
+    } else {
+      api.sendMessage("❌ Failed to send message to admins.", threadID, messageID);
+    }
+  }
+
   // Handle group events
   function handleEvent(event, api) {
     const { threadID, logMessageType } = event;
@@ -706,6 +756,7 @@ if (cluster.isMaster) {
     if (mqttListener) {
       try {
         mqttListener.stop();
+        isListenerActive = false;
       } catch (e) {
         console.log("⚠️ Could not stop existing listener:", e.message);
       }
@@ -716,6 +767,7 @@ if (cluster.isMaster) {
     mqttListener = api.listenMqtt((err, event) => {
       if (err) {
         console.error("❌ listenMqtt error:", err);
+        isListenerActive = false;
 
         // Exponential backoff for reconnection
         const delay = Math.min(10000 * Math.pow(2, reconnectAttempts), 60000);
@@ -736,6 +788,7 @@ if (cluster.isMaster) {
 
       // Reset reconnect attempts on successful connection
       reconnectAttempts = 0;
+      isListenerActive = true;
 
       if (!event) return;
 
@@ -752,6 +805,7 @@ if (cluster.isMaster) {
     if (mqttListener && mqttListener.on) {
       mqttListener.on('error', (error) => {
         console.error("❌ MQTT Listener error:", error);
+        isListenerActive = false;
       });
     }
   }
@@ -811,6 +865,7 @@ if (cluster.isMaster) {
         console.log('📴 Worker shutting down gracefully...');
         if (mqttListener && mqttListener.stop) {
           mqttListener.stop();
+          isListenerActive = false;
         }
         setTimeout(() => process.exit(0), 1000);
       });
@@ -984,37 +1039,13 @@ if (cluster.isMaster) {
   function sendQuoteMessage(senderID, threadID, messageID, api) {
     return new Promise((resolve, reject) => {
       try {
-        // Get random quote
         const randomQuote = quotes[Math.floor(Math.random() * quotes.length)];
-
-        // Get user info for mention
-        api.getUserInfo(senderID, (err, userInfo) => {
-          if (err) {
-            console.error("❌ Error getting user info:", err);
-            api.sendMessage(randomQuote, threadID, messageID);
-            return resolve();
-          }
-
-          const user = userInfo[senderID];
-          if (!user) {
-            api.sendMessage(randomQuote, threadID, messageID);
-            return resolve();
-          }
-
-          const userName = user.name || user.firstName || "Friend";
-
-          // Send message with mention
-          api.sendMessage({
-            body: `🥀 ${userName} 🥀\n\n${randomQuote}`,
-            mentions: [{ id: senderID, tag: userName }]
-          }, threadID, messageID, (err) => {
-            if (err) reject(err);
-            else resolve();
-          });
+        api.sendMessage(randomQuote, threadID, (err) => {
+          if (err) reject(err);
+          else resolve();
         });
       } catch (error) {
         console.error("❌ Error in sendQuoteMessage:", error);
-        api.sendMessage("❌ An error occurred", threadID, messageID);
         reject(error);
       }
     });

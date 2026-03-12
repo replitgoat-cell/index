@@ -2,6 +2,10 @@ modules = ["nodejs-20"]
 [agent]
 expertMode = true
 
+[[ports]]
+localPort = 3000
+externalPort = 80
+
 [workflows]
 runButton = "Project"
 
@@ -21,19 +25,7 @@ author = "agent"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "node index.js"
+waitForPort = 3000
 
 [workflows.workflow.metadata]
 outputType = "console"
-
-[deployment]
-deploymentTarget = "vm"
-run = ["node", "index.js"]
-
-[userenv]
-
-[userenv.shared]
-PORT = "3000"
-
-[[ports]]
-localPort = 3000
-externalPort = 80
