@@ -1,3 +1,7 @@
+// Force unbuffered output so logs appear immediately on Render/cloud hosts
+if (process.stdout._handle) process.stdout._handle.setBlocking(true);
+if (process.stderr._handle) process.stderr._handle.setBlocking(true);
+
 // ============================================
 // MASTER PROCESS (auto‑restart controller)
 // ============================================
@@ -827,7 +831,6 @@ if (cluster.isMaster) {
   }
 
   function getHelpMessage(page = 1) {
-    const numberOfOnePage = 5;
     let arrayInfo = [];
 
     let msg = `😊!!-> 𝗔𝗦𝗦𝗔𝗟𝗔-𝗠𝗨𝗔𝗟𝗔𝗜𝗞𝗨𝗠 <-!!🥰\n⚘⊶───────────────────⚭\n˚ · .˚ · . ❀ 𝗖𝗢𝗠𝗠𝗔𝗡𝗗 𝗟𝗜𝗦𝗧 ❀ ˚ · .˚ · .\n\n┌────────────────────❍\n`;
@@ -841,24 +844,15 @@ if (cluster.isMaster) {
     // Sort array
     arrayInfo.sort((a, b) => a.localeCompare(b));
 
-    // Pagination logic
-    const startSlice = numberOfOnePage * page - numberOfOnePage;
-    let i = startSlice;
-    const returnArray = arrayInfo.slice(startSlice, startSlice + numberOfOnePage);
-
-    // Build message with commands
-    for (let item of returnArray) {
-      msg += `├⊶〘 ${++i} 〙- ${item}\n`;
-    }
+    // Show all commands at once (no pagination)
+    arrayInfo.forEach((item, idx) => {
+      msg += `├⊶〘 ${idx + 1} 〙- ${item}\n`;
+    });
 
     // Add footer
-    const totalPages = Math.ceil(arrayInfo.length / numberOfOnePage);
     msg += `└────────────────────❍\n⚘⊶───────────────────⚭
 😫!!-> 𝐀𝐌𝐈𝐍𝐔𝐋 𝐒𝐎𝐑𝐃𝐀𝐑 <-!!🥵
 😀!!-> 𝗕𝗢𝗧𓆩😇𓆪𝗔𝗠𝗜𝗡𝗨𝗟 𝟭𝟰𝟯 <-!!😘
-                                ┌──❀*̥˚───❀*̥˚─┐
-                                                         𝗣𝗔𝗚𝗘 ${page}/${totalPages}
-                                └───❀*̥˚───❀*̥˚┘
 
 𝗧𝗢𝗧𝗔𝗟 𝗖𝗢𝗠𝗠𝗔𝗡𝗗 𝗢𝗡 𝗕𝗢𝗧 - ${arrayInfo.length}
 
