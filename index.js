@@ -1,7 +1,3 @@
-// Force unbuffered output so logs appear immediately on Render/cloud hosts
-if (process.stdout._handle) process.stdout._handle.setBlocking(true);
-if (process.stderr._handle) process.stderr._handle.setBlocking(true);
-
 // ============================================
 // MASTER PROCESS (auto‑restart controller)
 // ============================================
@@ -28,14 +24,12 @@ if (cluster.isMaster) {
     worker = startWorker();
   });
 
-  // Graceful shutdown on master termination (SIGINT and SIGTERM)
-  const shutdown = () => {
+  // Graceful shutdown on master termination
+  process.on('SIGINT', () => {
     console.log('🛑 Master shutting down...');
-    if (worker) worker.kill();
+    worker.kill();
     process.exit(0);
-  };
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+  });
 
 } else {
   // ============================================
@@ -140,9 +134,10 @@ if (cluster.isMaster) {
 
   // Enhanced health check endpoint
   app.get('/health', (req, res) => {
+    const isBotAlive = mqttListener && mqttListener.listening;
     res.json({ 
-      status: isListenerActive ? 'healthy' : 'degraded',
-      bot_status: isListenerActive ? 'listening' : 'disconnected',
+      status: isBotAlive ? 'healthy' : 'degraded',
+      bot_status: isBotAlive ? 'listening' : 'disconnected',
       uptime: getUptime(),
       pid: process.pid,
       message_queue: messageQueue.length,
@@ -228,24 +223,14 @@ if (cluster.isMaster) {
   const COMMANDS = {
     help: "Show all available commands and bot info",
     hello: "Say hello to the bot",
-    uptime: "Show bot uptime with random anime image",
+    uptime: "Show bot uptime",
     uid: "Get your user ID",
     ping: "Ping the bot",
     info: "Show admin information",
     pending: "Show pending group threads (Admin only)",
     admin: "Manage bot admins - admin list, admin add, admin remove (Admin only)",
-    "restart bot": "Restart the bot (Admin only)",
-    listbox: "List all groups the bot is in",
-    weather: "Get weather - weather <city>",
-    sendnoti: "Send notification to all groups (Admin only) - sendnoti <message>",
-    callad: "Contact the bot admin (sends a message to all admins)"
+    "restart bot": "Restart the bot (Admin only)"
   };
-
-  // Nekos image types for uptime command
-  const nekosTypes = [
-    "hug", "kiss", "neko", "fox_girl", "cuddle", "pat",
-    "waifu", "smug", "woof", "lizard", "meow", "feed"
-  ];
 
   // Language strings
   const languages = {
@@ -287,7 +272,7 @@ if (cluster.isMaster) {
     "suna tomare amar valo lage,🙈😽"
   ];
 
-  // Prefix list for quotes command (must be followed by space or end of string)
+  // Prefix list for quotes command
   const PREFIXES = ['bot', 'Bot'];
 
   // Get appstate
@@ -339,7 +324,6 @@ if (cluster.isMaster) {
   // ---------- FIXES START HERE ----------
   // MQTT listener variables
   let mqttListener = null;
-  let isListenerActive = false; // custom flag for health check
   let reconnectAttempts = 0;
   const MAX_RECONNECT_ATTEMPTS = 10;
   const messageQueue = [];
@@ -347,10 +331,10 @@ if (cluster.isMaster) {
 
   // Process message queue to prevent overload
   async function processMessageQueue() {
-    if (processingQueue) return;
-
+    if (processingQueue || messageQueue.length === 0) return;
+    
     processingQueue = true;
-
+    
     while (messageQueue.length > 0) {
       const { event, api } = messageQueue.shift();
       try {
@@ -361,108 +345,73 @@ if (cluster.isMaster) {
       // Small delay between messages
       await new Promise(resolve => setTimeout(resolve, 100));
     }
-
+    
     processingQueue = false;
-
-    // If new messages arrived while processing, they would have been added to the queue
-    // but the while loop already finished. However, if messages were added after the last
-    // shift but before processingQueue was set to false, they won't be processed.
-    // To cover that, check again and restart if needed.
-    if (messageQueue.length > 0 && !processingQueue) {
-      setImmediate(processMessageQueue);
-    }
   }
 
   // Handle incoming messages
   async function handleMessage(event, api) {
     const { body, threadID, messageID, senderID } = event;
-
+    
     if (!body) return;
 
-    const lowerBody = body.toLowerCase().trim();
-    console.log(`📨 [MESSAGE] User: ${senderID} | Thread: ${threadID} | Command: ${body}`);
+    const lowerBody = body.toLowerCase();
 
     try {
-      // Check for quotes command with prefix (exact prefix match: must be followed by space or end)
-      const startsWithPrefix = PREFIXES.some(prefix => {
-        const lowerPrefix = prefix.toLowerCase();
-        return lowerBody === lowerPrefix || lowerBody.startsWith(lowerPrefix + ' ');
-      });
-
+      // Check for quotes command with prefix
+      const startsWithPrefix = PREFIXES.some(prefix => body.startsWith(prefix));
       if (startsWithPrefix) {
         await sendQuoteMessage(senderID, threadID, messageID, api);
       } else {
-        // Handle commands
+        // Handle commands - VIDEO DOWNLOAD REMOVED
         switch (lowerBody) {
           case "hello":
-            console.log(`✅ [HELLO CMD] User: ${senderID}`);
             await api.sendMessage("hello i am aminul bot", threadID, messageID);
             break;
-
+            
           case "help":
-            console.log(`✅ [HELP CMD] User: ${senderID}`);
             await api.sendMessage(getHelpMessage(1), threadID, messageID);
             break;
-
+            
           case "uptime":
-            console.log(`✅ [UPTIME CMD] User: ${senderID}`);
-            await handleUptimeCommand(event, api);
+            await api.sendMessage(`⏱ Bot Uptime: ${getUptime()}`, threadID, messageID);
             break;
-
+            
           case "uid":
-            console.log(`✅ [UID CMD] User: ${senderID}`);
             await api.sendMessage(`👤 Your User ID: ${senderID}`, threadID, messageID);
             break;
-
+            
           case "ping":
-            console.log(`✅ [PING CMD] User: ${senderID}`);
             await api.sendMessage("🏓 Pong! I'm online and working perfectly!", threadID, messageID);
             break;
-
+            
           case "info":
-            console.log(`✅ [INFO CMD] User: ${senderID}`);
             await sendInfoMessage(threadID, messageID, api);
             break;
-
+            
           case "pending":
             if (!isAdmin(senderID)) {
-              console.log(`❌ [PENDING CMD] Unauthorized user: ${senderID}`);
               return api.sendMessage(_getText("adminOnly"), threadID, messageID);
             }
-            console.log(`✅ [PENDING CMD] Admin: ${senderID}`);
             await handlePendingCommand(threadID, messageID, api);
             break;
-
+            
           case "restart bot":
             if (!isAdmin(senderID)) {
-              console.log(`❌ [RESTART CMD] Unauthorized user: ${senderID}`);
               return api.sendMessage(_getText("adminOnly"), threadID, messageID);
             }
-            console.log(`✅ [RESTART CMD] Admin: ${senderID} - Restarting...`);
             await api.sendMessage("🔄 Restarting bot...", threadID, messageID);
             setTimeout(() => process.exit(1), 1000);
             break;
-
-          case "listbox":
-            console.log(`✅ [LISTBOX CMD] User: ${senderID}`);
-            await handleListboxCommand(threadID, messageID, api);
-            break;
-
-          case "callad":
-            console.log(`✅ [CALLAD CMD] User: ${senderID}`);
-            await handleCallAdCommand(event, api);
-            break;
-
+            
           default:
             if (lowerBody.startsWith("help ")) {
               const pageMatch = lowerBody.match(/help\s+(\d+)/);
               const page = pageMatch ? parseInt(pageMatch[1]) : 1;
-              console.log(`✅ [HELP PAGE CMD] User: ${senderID} | Page: ${page}`);
               await api.sendMessage(getHelpMessage(page), threadID, messageID);
             } 
             else if (lowerBody.startsWith("admin")) {
               if (!isAdmin(senderID)) {
-                console.log(`❌ [ADMIN CMD] Unauthorized user: ${senderID}`);
                 return api.sendMessage(_getText("adminOnly"), threadID, messageID);
               }
               const parts = lowerBody.split(" ");
@@ -470,32 +419,14 @@ if (cluster.isMaster) {
               const targetID = parts[2];
 
               if (subCommand === "list") {
-                console.log(`✅ [ADMIN LIST CMD] Admin: ${senderID}`);
                 await handleAdminList(threadID, messageID, api);
               } else if (subCommand === "add" && targetID) {
-                console.log(`✅ [ADMIN ADD CMD] Admin: ${senderID} | Target: ${targetID}`);
                 await handleAdminAdd(targetID, threadID, messageID, api);
               } else if (subCommand === "remove" && targetID) {
-                console.log(`✅ [ADMIN REMOVE CMD] Admin: ${senderID} | Target: ${targetID}`);
                 await handleAdminRemove(targetID, threadID, messageID, api);
               } else {
-                console.log(`❌ [ADMIN CMD] Invalid usage by ${senderID}`);
                 await api.sendMessage("❌ Usage: admin list | admin add <userID> | admin remove <userID>", threadID, messageID);
               }
-            }
-            else if (lowerBody.startsWith("weather ")) {
-              const city = lowerBody.replace("weather ", "").trim();
-              console.log(`✅ [WEATHER CMD] User: ${senderID} | City: ${city}`);
-              await handleWeatherCommand(city, threadID, messageID, api);
-            }
-            else if (lowerBody.startsWith("sendnoti ")) {
-              if (!isAdmin(senderID)) {
-                console.log(`❌ [SENDNOTI CMD] Unauthorized user: ${senderID}`);
-                return api.sendMessage(_getText("adminOnly"), threadID, messageID);
-              }
-              const message = lowerBody.replace("sendnoti ", "").trim();
-              console.log(`✅ [SENDNOTI CMD] Admin: ${senderID} | Message: ${message.substring(0, 50)}...`);
-              await handleSendNotiCommand(message, threadID, messageID, api);
             }
             // Removed URL detection and video download functionality
         }
@@ -510,235 +441,10 @@ if (cluster.isMaster) {
     }
   }
 
-  // Handle uptime command with nekos image
-  async function handleUptimeCommand(event, api) {
-    const { threadID, senderID } = event;
-
-    try {
-      console.log(`⏱️ [UPTIME] Fetching uptime info`);
-      // Calculate uptime
-      const uptimeMs = Date.now() - BOT_START_TIME;
-      const seconds = Math.floor((uptimeMs / 1000) % 60);
-      const minutes = Math.floor((uptimeMs / (1000 * 60)) % 60);
-      const hours = Math.floor((uptimeMs / (1000 * 60 * 60)) % 24);
-      const days = Math.floor(uptimeMs / (1000 * 60 * 60 * 24));
-
-      let uptimeString;
-      if (days > 0) uptimeString = `${days} day(s) ${hours} hour(s) ${minutes} minute(s) ${seconds} second(s)`;
-      else if (hours > 0) uptimeString = `${hours} hour(s) ${minutes} minute(s) ${seconds} second(s)`;
-      else if (minutes > 0) uptimeString = `${minutes} minute(s) ${seconds} second(s)`;
-      else uptimeString = `${seconds} second(s)`;
-
-      // Choose random nekos image type
-      const randomType = nekosTypes[Math.floor(Math.random() * nekosTypes.length)];
-      const apiUrl = `https://my-api-show.vercel.app/api/nekos?type=${randomType}`;
-
-      api.sendMessage("⏱️ Fetching uptime information with anime image...", threadID);
-
-      const res = await axios.get(apiUrl);
-      const imageUrl = res.data.url;
-
-      // Save the image
-      const ext = imageUrl.substring(imageUrl.lastIndexOf(".") + 1);
-      const cacheDir = path.join(__dirname, "cache");
-      if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir);
-      const filePath = path.join(cacheDir, `uptime_${Date.now()}.${ext}`);
-
-      const caption = `
-➽────────────────❥
-🤖 𝗕𝗼𝘁 𝗨𝗽𝘁𝗶𝗺𝗲 𝗜𝗻𝗳𝗼𝗿𝗺𝗮𝘁𝗶𝗼𝗻 🤖
-
-⏳ 𝗧𝗼𝘁𝗮𝗹 𝗧𝗶𝗺𝗲 𝗥𝘂𝗻𝗻𝗶𝗻𝗴:
-💫 ${uptimeString}
-
-🌸 𝗥𝗮𝗻𝗱𝗼𝗺 𝗔𝗻𝗶𝗺𝗲: ${randomType}
-👑 𝗕𝗼𝘁 𝗕𝘆: @Aminusardar
-🔗 facebook.com/100071880593545
-🎯 𝗘𝗻𝗷𝗼𝘆 𝘂𝘀𝗶𝗻𝗴 𝘁𝗵𝗲 𝗯𝗼𝘁! 💖
-➽────────────────❥
-`;
-
-      // Send with attachment
-      const callback = () => {
-        api.sendMessage(
-          {
-            body: caption,
-            attachment: fs.createReadStream(filePath)
-          },
-          threadID,
-          () => fs.unlinkSync(filePath)
-        );
-      };
-
-      request(imageUrl)
-        .pipe(fs.createWriteStream(filePath))
-        .on("close", callback)
-        .on("error", (err) => {
-          console.error("❌ Error downloading image:", err);
-          api.sendMessage(caption, threadID);
-        });
-
-    } catch (error) {
-      console.error("❌ Error in handleUptimeCommand:", error);
-      api.sendMessage("❌ Failed to fetch uptime information with image.", threadID);
-    }
-  }
-
-  // Handle listbox command - list all groups
-  async function handleListboxCommand(threadID, messageID, api) {
-    try {
-      api.sendMessage("📦 Fetching group list...", threadID);
-      
-      const groups = await api.getThreadList(500, null, ["INBOX"]);
-      const groupList = groups.filter(g => g.isGroup);
-      console.log(`📦 [LISTBOX] Fetched ${groupList.length} groups`);
-      
-      if (!groupList.length) {
-        console.log(`📦 [LISTBOX] No groups found`);
-        return api.sendMessage("❌ No groups found", threadID, messageID);
-      }
-
-      let msg = `📦 𝗠𝗬 𝗚𝗥𝗢𝗨𝗣𝗦 (${groupList.length})\n\n`;
-      groupList.forEach((g, i) => {
-        msg += `${i + 1}. ${g.name}\n   ID: ${g.threadID}\n`;
-      });
-      msg += `\n✅ Total Groups: ${groupList.length}`;
-      
-      api.sendMessage(msg, threadID, messageID);
-      console.log(`📦 [LISTBOX] Successfully sent group list`);
-    } catch (error) {
-      console.error("❌ [LISTBOX ERROR]:", error);
-      api.sendMessage("❌ Failed to fetch group list", threadID, messageID);
-    }
-  }
-
-  // Handle weather command
-  async function handleWeatherCommand(city, threadID, messageID, api) {
-    try {
-      if (!city || city === "") {
-        console.log(`❌ [WEATHER] No city provided`);
-        return api.sendMessage("❌ Usage: weather <city>", threadID, messageID);
-      }
-
-      console.log(`🌤️ [WEATHER] Fetching data for: ${city}`);
-      api.sendMessage("🌤️ Fetching weather data...", threadID);
-      
-      // Get city coordinates first
-      const geoRes = await axios.get(
-        `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=en&format=json`
-      );
-
-      if (!geoRes.data.results || geoRes.data.results.length === 0) {
-        console.log(`❌ [WEATHER] City not found: ${city}`);
-        return api.sendMessage(`❌ City "${city}" not found`, threadID, messageID);
-      }
-
-      const place = geoRes.data.results[0];
-      const lat = place.latitude;
-      const lon = place.longitude;
-
-      // Get weather data
-      const weatherRes = await axios.get(
-        `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m&timezone=auto`
-      );
-
-      const current = weatherRes.data.current;
-      const msg = `
-🌤️ 𝗪𝗘𝗔𝗧𝗛𝗘𝗥 𝗜𝗡𝗙𝗢 🌤️
-
-📍 Location: ${place.name}, ${place.country}
-🌡️ Temperature: ${current.temperature_2m}°C
-💨 Wind Speed: ${current.wind_speed_10m} km/h
-💧 Humidity: ${current.relative_humidity_2m}%
-
-`;
-      
-      console.log(`🌤️ [WEATHER] Successfully fetched weather for: ${city}`);
-      api.sendMessage(msg, threadID, messageID);
-    } catch (error) {
-      console.error("❌ [WEATHER ERROR]:", error.message);
-      api.sendMessage("❌ Failed to fetch weather data", threadID, messageID);
-    }
-  }
-
-  // Handle sendnoti command - send notification to all groups
-  async function handleSendNotiCommand(message, threadID, messageID, api) {
-    try {
-      if (!message || message === "") {
-        console.log(`❌ [SENDNOTI] No message provided`);
-        return api.sendMessage("❌ Usage: sendnoti <message>", threadID, messageID);
-      }
-
-      console.log(`📢 [SENDNOTI] Starting broadcast...`);
-      api.sendMessage("📢 Broadcasting notification to all groups...", threadID);
-
-      const groups = await api.getThreadList(500, null, ["INBOX"]);
-      const groupList = groups.filter(g => g.isGroup);
-      console.log(`📢 [SENDNOTI] Found ${groupList.length} groups to send to`);
-
-      if (!groupList.length) {
-        console.log(`📢 [SENDNOTI] No groups available`);
-        return api.sendMessage("❌ No groups to send notification to", threadID, messageID);
-      }
-
-      let successCount = 0;
-      let failCount = 0;
-
-      for (const group of groupList) {
-        try {
-          await api.sendMessage(`📢 𝗔𝗗𝗠𝗜𝗡 𝗠𝗦𝗚: ${message}`, group.threadID);
-          successCount++;
-          console.log(`📢 [SENDNOTI] Sent to: ${group.name}`);
-        } catch (err) {
-          console.error(`📢 [SENDNOTI] Failed to send to ${group.name}:`, err);
-          failCount++;
-        }
-        await new Promise(r => setTimeout(r, 100)); // Delay between messages
-      }
-
-      const result = `✅ Notification sent successfully!\n\n📊 Results:\n✔️ Success: ${successCount}\n❌ Failed: ${failCount}`;
-      api.sendMessage(result, threadID, messageID);
-      console.log(`📢 [SENDNOTI] Broadcast complete - Success: ${successCount}, Failed: ${failCount}`);
-    } catch (error) {
-      console.error("❌ [SENDNOTI ERROR]:", error);
-      api.sendMessage("❌ Failed to broadcast notification", threadID, messageID);
-    }
-  }
-
-  // Handle callad command
-  async function handleCallAdCommand(event, api) {
-    const { senderID, threadID, messageID, body } = event;
-    // Extract message after "callad"
-    const message = body.substring(6).trim() || "No message provided";
-
-    if (adminList.length === 0) {
-      return api.sendMessage("❌ No admins configured.", threadID, messageID);
-    }
-
-    let successCount = 0;
-    for (const adminID of adminList) {
-      try {
-        await api.sendMessage(
-          `📞 **CALLAD** from user ${senderID} in thread ${threadID}:\n\n${message}`,
-          adminID
-        );
-        successCount++;
-      } catch (err) {
-        console.error(`❌ Failed to send callad to admin ${adminID}:`, err);
-      }
-    }
-
-    if (successCount > 0) {
-      api.sendMessage(`✅ Your message has been sent to ${successCount} admin(s).`, threadID, messageID);
-    } else {
-      api.sendMessage("❌ Failed to send message to admins.", threadID, messageID);
-    }
-  }
-
   // Handle group events
   function handleEvent(event, api) {
     const { threadID, logMessageType } = event;
-
+    
     try {
       if (logMessageType === "log:subscribe") {
         api.sendMessage("👋 Welcome to the group! Use /help to see available commands.", threadID);
@@ -756,25 +462,23 @@ if (cluster.isMaster) {
     if (mqttListener) {
       try {
         mqttListener.stop();
-        isListenerActive = false;
       } catch (e) {
         console.log("⚠️ Could not stop existing listener:", e.message);
       }
     }
 
     console.log("🔄 Setting up MQTT listener...");
-
+    
     mqttListener = api.listenMqtt((err, event) => {
       if (err) {
         console.error("❌ listenMqtt error:", err);
-        isListenerActive = false;
-
+        
         // Exponential backoff for reconnection
         const delay = Math.min(10000 * Math.pow(2, reconnectAttempts), 60000);
         reconnectAttempts++;
-
+        
         console.log(`⚠️ Reconnecting in ${delay/1000}s... (Attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`);
-
+        
         setTimeout(() => {
           if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
             setupMqttListener(api);
@@ -788,7 +492,6 @@ if (cluster.isMaster) {
 
       // Reset reconnect attempts on successful connection
       reconnectAttempts = 0;
-      isListenerActive = true;
 
       if (!event) return;
 
@@ -805,7 +508,6 @@ if (cluster.isMaster) {
     if (mqttListener && mqttListener.on) {
       mqttListener.on('error', (error) => {
         console.error("❌ MQTT Listener error:", error);
-        isListenerActive = false;
       });
     }
   }
@@ -847,7 +549,7 @@ if (cluster.isMaster) {
           `🆔 **PID:** ${process.pid}\n` +
           `📅 **Timestamp:** ${new Date().toLocaleString()}\n\n` +
           `🤖 *Automated System Report*`;
-
+        
         adminList.forEach(adminID => {
           api.sendMessage(report, adminID);
         });
@@ -856,7 +558,7 @@ if (cluster.isMaster) {
 
       // Start MQTT listener with fixes
       setupMqttListener(api);
-
+      
       // Start keep-alive
       startKeepAlive(api);
 
@@ -865,7 +567,6 @@ if (cluster.isMaster) {
         console.log('📴 Worker shutting down gracefully...');
         if (mqttListener && mqttListener.stop) {
           mqttListener.stop();
-          isListenerActive = false;
         }
         setTimeout(() => process.exit(0), 1000);
       });
@@ -886,6 +587,7 @@ if (cluster.isMaster) {
   }
 
   function getHelpMessage(page = 1) {
+    const numberOfOnePage = 5;
     let arrayInfo = [];
 
     let msg = `😊!!-> 𝗔𝗦𝗦𝗔𝗟𝗔-𝗠𝗨𝗔𝗟𝗔𝗜𝗞𝗨𝗠 <-!!🥰\n⚘⊶───────────────────⚭\n˚ · .˚ · . ❀ 𝗖𝗢𝗠𝗠𝗔𝗡𝗗 𝗟𝗜𝗦𝗧 ❀ ˚ · .˚ · .\n\n┌────────────────────❍\n`;
@@ -899,15 +601,24 @@ if (cluster.isMaster) {
     // Sort array
     arrayInfo.sort((a, b) => a.localeCompare(b));
 
-    // Show all commands at once (no pagination)
-    arrayInfo.forEach((item, idx) => {
-      msg += `├⊶〘 ${idx + 1} 〙- ${item}\n`;
-    });
+    // Pagination logic
+    const startSlice = numberOfOnePage * page - numberOfOnePage;
+    let i = startSlice;
+    const returnArray = arrayInfo.slice(startSlice, startSlice + numberOfOnePage);
+
+    // Build message with commands
+    for (let item of returnArray) {
+      msg += `├⊶〘 ${++i} 〙- ${item}\n`;
+    }
 
     // Add footer
+    const totalPages = Math.ceil(arrayInfo.length / numberOfOnePage);
     msg += `└────────────────────❍\n⚘⊶───────────────────⚭
 😫!!-> 𝐀𝐌𝐈𝐍𝐔𝐋 𝐒𝐎𝐑𝐃𝐀𝐑 <-!!🥵
 😀!!-> 𝗕𝗢𝗧𓆩😇𓆪𝗔𝗠𝗜𝗡𝗨𝗟 𝟭𝟰𝟯 <-!!😘
+                                ┌──❀*̥˚───❀*̥˚─┐
+                                                         𝗣𝗔𝗚𝗘 ${page}/${totalPages}
+                                └───❀*̥˚───❀*̥˚┘
 
 𝗧𝗢𝗧𝗔𝗟 𝗖𝗢𝗠𝗠𝗔𝗡𝗗 𝗢𝗡 𝗕𝗢𝗧 - ${arrayInfo.length}
 
@@ -953,21 +664,18 @@ if (cluster.isMaster) {
   // Handle pending command
   async function handlePendingCommand(threadID, messageID, api) {
     try {
-      console.log(`📋 [PENDING] Fetching pending groups...`);
       let pendingList = [];
 
       try {
         const other = await api.getThreadList(100, null, ["OTHER"]);
         const pending = await api.getThreadList(100, null, ["PENDING"]);
         pendingList = [...other, ...pending].filter(g => g.isGroup && g.isSubscribed);
-        console.log(`📋 [PENDING] Found ${pendingList.length} pending groups`);
       } catch (err) {
-        console.error("❌ [PENDING ERROR] Getting thread list:", err);
+        console.error("❌ Error getting thread list:", err);
         return api.sendMessage(_getText("cantGetPendingList"), threadID, messageID);
       }
 
       if (!pendingList.length) {
-        console.log(`📋 [PENDING] No pending groups`);
         return api.sendMessage(_getText("returnListClean"), threadID, messageID);
       }
 
@@ -1039,13 +747,37 @@ if (cluster.isMaster) {
   function sendQuoteMessage(senderID, threadID, messageID, api) {
     return new Promise((resolve, reject) => {
       try {
+        // Get random quote
         const randomQuote = quotes[Math.floor(Math.random() * quotes.length)];
-        api.sendMessage(randomQuote, threadID, (err) => {
-          if (err) reject(err);
-          else resolve();
+
+        // Get user info for mention
+        api.getUserInfo(senderID, (err, userInfo) => {
+          if (err) {
+            console.error("❌ Error getting user info:", err);
+            api.sendMessage(randomQuote, threadID, messageID);
+            return resolve();
+          }
+
+          const user = userInfo[senderID];
+          if (!user) {
+            api.sendMessage(randomQuote, threadID, messageID);
+            return resolve();
+          }
+
+          const userName = user.name || user.firstName || "Friend";
+
+          // Send message with mention
+          api.sendMessage({
+            body: `🥀 ${userName} 🥀\n\n${randomQuote}`,
+            mentions: [{ id: senderID, tag: userName }]
+          }, threadID, messageID, (err) => {
+            if (err) reject(err);
+            else resolve();
+          });
         });
       } catch (error) {
         console.error("❌ Error in sendQuoteMessage:", error);
+        api.sendMessage("❌ An error occurred", threadID, messageID);
         reject(error);
       }
     });
