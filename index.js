@@ -18,9 +18,9 @@ if (cluster.isMaster) {
   // Start initial worker
   let worker = startWorker();
 
-  // Restart worker if it dies
+  // Restart worker if it dies – with detailed log
   cluster.on('exit', (deadWorker, code, signal) => {
-    console.log(`💥 Worker ${deadWorker.process.pid} died. Restarting...`);
+    console.log(`💥 Worker ${deadWorker.process.pid} died with code ${code} (signal: ${signal}). Restarting...`);
     worker = startWorker();
   });
 
@@ -33,8 +33,11 @@ if (cluster.isMaster) {
 
 } else {
   // ============================================
-  // WORKER PROCESS (your original bot with fixes)
+  // WORKER PROCESS (your original bot with logs)
   // ============================================
+
+  // ----- Enable FCA debug logs (optional but very verbose) -----
+  process.env.DEBUG = 'fca*';  // Logs all internal fca messages
 
   // ----- Global error handlers -----
   process.on('uncaughtException', (err) => {
@@ -321,7 +324,7 @@ if (cluster.isMaster) {
 
   setInterval(cleanCache, 1800000);
 
-  // ---------- FIXES START HERE ----------
+  // ---------- FIXES AND LOGGING ENHANCEMENTS ----------
   // MQTT listener variables
   let mqttListener = null;
   let reconnectAttempts = 0;
@@ -334,9 +337,11 @@ if (cluster.isMaster) {
     if (processingQueue || messageQueue.length === 0) return;
     
     processingQueue = true;
+    console.log(`🔄 Processing message queue (${messageQueue.length} messages)...`);
     
     while (messageQueue.length > 0) {
       const { event, api } = messageQueue.shift();
+      console.log(`⚙️ Dequeued message from ${event.senderID} (queue remaining: ${messageQueue.length})`);
       try {
         await handleMessage(event, api);
       } catch (error) {
@@ -347,10 +352,14 @@ if (cluster.isMaster) {
     }
     
     processingQueue = false;
+    console.log("✅ Message queue processed.");
   }
 
   // Handle incoming messages
   async function handleMessage(event, api) {
+    // --- LOG INCOMING MESSAGE ---
+    console.log(`📩 INCOMING from ${event.senderID} in thread ${event.threadID}: ${event.body}`);
+
     const { body, threadID, messageID, senderID } = event;
     
     if (!body) return;
@@ -366,23 +375,23 @@ if (cluster.isMaster) {
         // Handle commands - VIDEO DOWNLOAD REMOVED
         switch (lowerBody) {
           case "hello":
-            await api.sendMessage("hello i am aminul bot", threadID, messageID);
+            await logAndSend(api, "hello i am aminul bot", threadID, messageID);
             break;
             
           case "help":
-            await api.sendMessage(getHelpMessage(1), threadID, messageID);
+            await logAndSend(api, getHelpMessage(1), threadID, messageID);
             break;
             
           case "uptime":
-            await api.sendMessage(`⏱ Bot Uptime: ${getUptime()}`, threadID, messageID);
+            await logAndSend(api, `⏱ Bot Uptime: ${getUptime()}`, threadID, messageID);
             break;
             
           case "uid":
-            await api.sendMessage(`👤 Your User ID: ${senderID}`, threadID, messageID);
+            await logAndSend(api, `👤 Your User ID: ${senderID}`, threadID, messageID);
             break;
             
           case "ping":
-            await api.sendMessage("🏓 Pong! I'm online and working perfectly!", threadID, messageID);
+            await logAndSend(api, "🏓 Pong! I'm online and working perfectly!", threadID, messageID);
             break;
             
           case "info":
@@ -391,16 +400,16 @@ if (cluster.isMaster) {
             
           case "pending":
             if (!isAdmin(senderID)) {
-              return api.sendMessage(_getText("adminOnly"), threadID, messageID);
+              return logAndSend(api, _getText("adminOnly"), threadID, messageID);
             }
             await handlePendingCommand(threadID, messageID, api);
             break;
             
           case "restart bot":
             if (!isAdmin(senderID)) {
-              return api.sendMessage(_getText("adminOnly"), threadID, messageID);
+              return logAndSend(api, _getText("adminOnly"), threadID, messageID);
             }
-            await api.sendMessage("🔄 Restarting bot...", threadID, messageID);
+            await logAndSend(api, "🔄 Restarting bot...", threadID, messageID);
             setTimeout(() => process.exit(1), 1000);
             break;
             
@@ -408,11 +417,11 @@ if (cluster.isMaster) {
             if (lowerBody.startsWith("help ")) {
               const pageMatch = lowerBody.match(/help\s+(\d+)/);
               const page = pageMatch ? parseInt(pageMatch[1]) : 1;
-              await api.sendMessage(getHelpMessage(page), threadID, messageID);
+              await logAndSend(api, getHelpMessage(page), threadID, messageID);
             } 
             else if (lowerBody.startsWith("admin")) {
               if (!isAdmin(senderID)) {
-                return api.sendMessage(_getText("adminOnly"), threadID, messageID);
+                return logAndSend(api, _getText("adminOnly"), threadID, messageID);
               }
               const parts = lowerBody.split(" ");
               const subCommand = parts[1];
@@ -425,7 +434,7 @@ if (cluster.isMaster) {
               } else if (subCommand === "remove" && targetID) {
                 await handleAdminRemove(targetID, threadID, messageID, api);
               } else {
-                await api.sendMessage("❌ Usage: admin list | admin add <userID> | admin remove <userID>", threadID, messageID);
+                await logAndSend(api, "❌ Usage: admin list | admin add <userID> | admin remove <userID>", threadID, messageID);
               }
             }
             // Removed URL detection and video download functionality
@@ -434,7 +443,7 @@ if (cluster.isMaster) {
     } catch (error) {
       console.error("❌ Error handling message:", error);
       try {
-        await api.sendMessage("❌ An error occurred processing your command.", threadID, messageID);
+        await logAndSend(api, "❌ An error occurred processing your command.", threadID, messageID);
       } catch (e) {
         console.error("❌ Failed to send error message:", e);
       }
@@ -445,6 +454,8 @@ if (cluster.isMaster) {
   function handleEvent(event, api) {
     const { threadID, logMessageType } = event;
     
+    console.log(`📡 GROUP EVENT: ${logMessageType} in thread ${threadID}`);
+
     try {
       if (logMessageType === "log:subscribe") {
         api.sendMessage("👋 Welcome to the group! Use /help to see available commands.", threadID);
@@ -456,10 +467,11 @@ if (cluster.isMaster) {
     }
   }
 
-  // Setup MQTT listener with proper reconnection
+  // Setup MQTT listener with proper reconnection and detailed logging
   function setupMqttListener(api) {
     // Stop existing listener if any
     if (mqttListener) {
+      console.log("🛑 Stopping previous MQTT listener...");
       try {
         mqttListener.stop();
       } catch (e) {
@@ -495,6 +507,9 @@ if (cluster.isMaster) {
 
       if (!event) return;
 
+      // Log the raw event type (optional)
+      console.log(`📡 MQTT event received: type=${event.type}, thread=${event.threadID}`);
+
       // Handle different event types
       if (event.type === "message" || event.type === "message_reply") {
         messageQueue.push({ event, api });
@@ -510,9 +525,11 @@ if (cluster.isMaster) {
         console.error("❌ MQTT Listener error:", error);
       });
     }
+
+    console.log("✅ MQTT listener is active.");
   }
 
-  // Keep-alive mechanism
+  // Keep-alive mechanism with enhanced logging
   function startKeepAlive(api) {
     setInterval(() => {
       if (api && api.getCurrentUserID) {
@@ -520,11 +537,27 @@ if (cluster.isMaster) {
           if (err) {
             console.error("❌ Keep-alive failed:", err);
           } else {
-            console.log("💓 Keep-alive ping successful");
+            console.log(`💓 Keep-alive ping successful (userID: ${userID})`);
           }
         });
       }
     }, 300000); // Every 5 minutes
+  }
+
+  // Helper to log outgoing messages (monkey-patch api.sendMessage)
+  function patchSendMessage(api) {
+    const originalSend = api.sendMessage;
+    api.sendMessage = function(message, threadID, messageID, callback) {
+      // Log outgoing message
+      console.log(`📤 OUTGOING to thread ${threadID}: ${typeof message === 'string' ? message : JSON.stringify(message).substring(0, 200)}...`);
+      return originalSend.call(this, message, threadID, messageID, callback);
+    };
+  }
+
+  // Convenience function for logging (used where api.sendMessage is already called)
+  async function logAndSend(api, message, threadID, messageID) {
+    console.log(`📤 OUTGOING to thread ${threadID}: ${typeof message === 'string' ? message : JSON.stringify(message).substring(0, 200)}...`);
+    return api.sendMessage(message, threadID, messageID);
   }
 
   // ---------- END OF FIXES ----------
@@ -540,6 +573,9 @@ if (cluster.isMaster) {
 
       console.log("✅ Bot Login Success!");
       console.log(`🤖 Bot is now listening for messages...`);
+
+      // Patch api.sendMessage to log all outgoing messages automatically
+      patchSendMessage(api);
 
       // Health report task (Every 1 hour)
       setInterval(() => {
@@ -566,6 +602,7 @@ if (cluster.isMaster) {
       process.on('SIGTERM', () => {
         console.log('📴 Worker shutting down gracefully...');
         if (mqttListener && mqttListener.stop) {
+          console.log('🛑 Stopping MQTT listener...');
           mqttListener.stop();
         }
         setTimeout(() => process.exit(0), 1000);
@@ -672,11 +709,11 @@ if (cluster.isMaster) {
         pendingList = [...other, ...pending].filter(g => g.isGroup && g.isSubscribed);
       } catch (err) {
         console.error("❌ Error getting thread list:", err);
-        return api.sendMessage(_getText("cantGetPendingList"), threadID, messageID);
+        return logAndSend(api, _getText("cantGetPendingList"), threadID, messageID);
       }
 
       if (!pendingList.length) {
-        return api.sendMessage(_getText("returnListClean"), threadID, messageID);
+        return logAndSend(api, _getText("returnListClean"), threadID, messageID);
       }
 
       let msg = "";
@@ -684,14 +721,15 @@ if (cluster.isMaster) {
         msg += `${i + 1}/ ${g.name} (${g.threadID})\n`;
       });
 
-      return api.sendMessage(
+      return logAndSend(
+        api,
         _getText("returnListPending", pendingList.length, msg),
         threadID,
         messageID
       );
     } catch (error) {
       console.error("❌ Error in handlePendingCommand:", error);
-      api.sendMessage(_getText("cantGetPendingList"), threadID, messageID);
+      logAndSend(api, _getText("cantGetPendingList"), threadID, messageID);
     }
   }
 
@@ -702,10 +740,10 @@ if (cluster.isMaster) {
       adminList.forEach((id, index) => {
         msg += `${index + 1}. ${id}\n`;
       });
-      api.sendMessage(msg, threadID, messageID);
+      logAndSend(api, msg, threadID, messageID);
     } catch (error) {
       console.error("❌ Error in handleAdminList:", error);
-      api.sendMessage("❌ Error retrieving admin list", threadID, messageID);
+      logAndSend(api, "❌ Error retrieving admin list", threadID, messageID);
     }
   }
 
@@ -713,16 +751,16 @@ if (cluster.isMaster) {
   function handleAdminAdd(userID, threadID, messageID, api) {
     try {
       if (!userID || userID === "") {
-        return api.sendMessage("❌ Please provide a valid user ID", threadID, messageID);
+        return logAndSend(api, "❌ Please provide a valid user ID", threadID, messageID);
       }
       if (addAdmin(userID)) {
-        api.sendMessage(`✅ User ${userID} has been added as admin!`, threadID, messageID);
+        logAndSend(api, `✅ User ${userID} has been added as admin!`, threadID, messageID);
       } else {
-        api.sendMessage(`⚠️ User ${userID} is already an admin!`, threadID, messageID);
+        logAndSend(api, `⚠️ User ${userID} is already an admin!`, threadID, messageID);
       }
     } catch (error) {
       console.error("❌ Error in handleAdminAdd:", error);
-      api.sendMessage("❌ Error adding admin", threadID, messageID);
+      logAndSend(api, "❌ Error adding admin", threadID, messageID);
     }
   }
 
@@ -730,16 +768,16 @@ if (cluster.isMaster) {
   function handleAdminRemove(userID, threadID, messageID, api) {
     try {
       if (!userID || userID === "") {
-        return api.sendMessage("❌ Please provide a valid user ID", threadID, messageID);
+        return logAndSend(api, "❌ Please provide a valid user ID", threadID, messageID);
       }
       if (removeAdmin(userID)) {
-        api.sendMessage(`✅ User ${userID} has been removed from admins!`, threadID, messageID);
+        logAndSend(api, `✅ User ${userID} has been removed from admins!`, threadID, messageID);
       } else {
-        api.sendMessage(`⚠️ User ${userID} is not an admin!`, threadID, messageID);
+        logAndSend(api, `⚠️ User ${userID} is not an admin!`, threadID, messageID);
       }
     } catch (error) {
       console.error("❌ Error in handleAdminRemove:", error);
-      api.sendMessage("❌ Error removing admin", threadID, messageID);
+      logAndSend(api, "❌ Error removing admin", threadID, messageID);
     }
   }
 
@@ -754,13 +792,13 @@ if (cluster.isMaster) {
         api.getUserInfo(senderID, (err, userInfo) => {
           if (err) {
             console.error("❌ Error getting user info:", err);
-            api.sendMessage(randomQuote, threadID, messageID);
+            logAndSend(api, randomQuote, threadID, messageID);
             return resolve();
           }
 
           const user = userInfo[senderID];
           if (!user) {
-            api.sendMessage(randomQuote, threadID, messageID);
+            logAndSend(api, randomQuote, threadID, messageID);
             return resolve();
           }
 
@@ -777,7 +815,7 @@ if (cluster.isMaster) {
         });
       } catch (error) {
         console.error("❌ Error in sendQuoteMessage:", error);
-        api.sendMessage("❌ An error occurred", threadID, messageID);
+        logAndSend(api, "❌ An error occurred", threadID, messageID);
         reject(error);
       }
     });
